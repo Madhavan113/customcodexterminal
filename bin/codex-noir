@@ -1,0 +1,16 @@
+#!/bin/sh
+# This launcher preserves Codex's existing home, authentication, and CLI arguments.
+codex_noir_binary="$HOME/.local/share/codex-noir/0.153.4/bin/codex"
+if [ ! -x "$codex_noir_binary" ]; then
+    printf '%s\n' "Codex Noir is not installed at $codex_noir_binary" >&2
+    exit 127
+fi
+
+# Defaults come before user arguments so explicit -c overrides still win.
+if [ -f "${CODEX_HOME:-$HOME/.codex}/themes/noir-velocity.tmTheme" ]; then
+    exec "$codex_noir_binary" \
+        -c 'check_for_update_on_startup=false' \
+        -c 'tui.theme="noir-velocity"' \
+        "$@"
+fi
+exec "$codex_noir_binary" -c 'check_for_update_on_startup=false' "$@"

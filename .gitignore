@@ -1,4 +1,4 @@
-# Generated applications and downloaded vendor archives
+# Generated upstream checkouts and downloaded source archives
 build/
 downloads/
 
@@ -17,3 +17,4 @@ __pycache__/
 .env.*
 !.env.example
 .DS_Store
+build-source.log

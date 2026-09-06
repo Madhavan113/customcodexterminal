@@ -1,0 +1,39 @@
+---
+source: tui/src/bottom_pane/chat_composer/noir_activity_tests.rs
+expression: "gallery.join(\"\\n\\n\")"
+---
+None 0ms
+  ───────── WORKING ──────────
+8af6ff 80e4ed 69b9c2 4e8890 396168 2c4a51 263f45 233a41 233940 76d2db 76d2db 76d2db 76d2db 76d2db 76d2db 76d2db 76d2db 76d2db 22393f 22393f 22393f 22393f 22393f 22393f 22393f 22393f 22393f 22393f
+
+None 700ms
+  ───────── WORKING ──────────
+233940 233b41 264046 2d4c53 3b656d 518e96 6cbfc8 82e8f1 89f5fe 7ee0e9 76d2db 76d2db 76d2db 76d2db 76d2db 76d2db 76d2db 76d2db 22393f 22393f 22393f 22393f 22393f 22393f 22393f 22393f 22393f 22393f
+
+None 1700ms
+  ───────── WORKING ──────────
+22393f 22393f 22393f 22393f 22393f 22393f 22393f 22393f 22393f 76d2db 76d2db 76d2db 76d2db 76d2db 76d2db 76d2db 76d2db 76d2db 7ee0e9 89f5fe 82e8f1 6cbfc8 518e96 3b656d 2d4c53 264046 233b41 233940
+
+Some(Max) 0ms
+  ─────────── MAX ────────────
+ffb242 feb141 feb141 fdb141 fdb041 fcb041 faaf41 f9ae40 f7ac40 f5ab40 f3aa3f f1a83f eea63e eca53e e9a33d e6a13c e29e3c df9c3b db9a3a d8973a d49439 d09238 cc8f37 c88c36 c48936 bf8635 bb8334 b78033
+
+Some(Max) 700ms
+  ─────────── MAX ────────────
+a67530 aa7830 af7b31 b37e32 b88133 bc8434 c18735 c58a36 c98d37 cd9038 d19338 da983a da983a dd9a3b e09d3b e39f3c e7a13d eaa33d eca53e efa73e f2a93f f4aa3f f6ac40 f8ad40 f9ae40 fbaf41 fcb041 fdb041
+
+Some(Max) 1700ms
+  ─────────── MAX ────────────
+614621 5e4421 5b4220 594120 573f1f 553e1f 533d1f 523c1e 503b1e 4f3a1e 4f391e da983a da983a da983a da983a da983a 4e391e 4f3a1e 503a1e 513b1e 533c1f 543d1f 563f1f 584020 5b4220 5d4321 604521 634722
+
+Some(Ultra) 0ms
+  ────────── ULTRA ───────────
+a2bcff 99ccfe 92d9fc 8be3f8 85e7f3 80e4ee 7ddce7 7bcfdf 7bbed7 7baace 88a6db 8e97db 9489db 997ddb 9c75db 9e70db 9e70db 6b5097 675494 635b93 606493 5d6f95 5b7b98 5a889c 5a94a2 5c9fa9 5fa7b0 64aeb8
+
+Some(Ultra) 700ms
+  ────────── ULTRA ───────────
+9575d3 8a7acb 8081c2 7587b9 6b8db1 6291aa 5b93a3 56939d 539099 518d95 79cadb 7cc1db 82b5db 88a7db 8e97db 948adb 987edb 7a5cac 815cb3 8760bc 8c68c4 8f74cd 9183d6 9197de 90ace6 8ec1ed 8cd4f3 8ae4f8
+
+Some(Ultra) 1700ms
+  ────────── ULTRA ───────────
+685294 6b4f96 6f4f9a 72529f 755aa5 7765ac 7873b4 7985bc 7999c5 79adce 7bc4db 7ad0df 7cdde6 80e3ed 85e4f3 8cdff8 93d6fb 9bc7fe a2b6fe a9a5fe af95fb b187f9 b17ef4 ac79ee a778e6 9e7bdf 9481d8 8a88cf

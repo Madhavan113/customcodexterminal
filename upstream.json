@@ -1,0 +1,12 @@
+{
+  "version": "0.153.4",
+  "tag": "rust-v0.153.4",
+  "rust": "1.95.0",
+  "target": "aarch64-apple-darwin",
+  "archive_url": "https://github.com/openai/codex/archive/refs/tags/rust-v0.153.4.tar.gz",
+  "archive_sha256": "74d988c0e154aad2b8d0cca4e950fc97fe2a29ff5ebe3b0070cce6d949c9a307",
+  "integration_patch": "patches/codex-integration.patch",
+  "integration_sha256": "ed9cc4b83020b96f0655d655e08e9042972d4ad2fdb2db3cd3dd9e207fef52a3",
+  "overlay_target": "codex-rs/tui/src/bottom_pane/chat_composer",
+  "asset_target": "codex-rs/tui/assets/noir"
+}

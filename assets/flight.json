@@ -1,0 +1,11 @@
+{
+  "title": "Flight",
+  "width": 160,
+  "height": 90,
+  "fps": 12,
+  "poster": "flight.jpg",
+  "sourceUrl": "https://madhavanprasanna.com/video3.mp4",
+  "sourceCredit": "Video from Madhavan Prasanna\u2019s supplied homepage reference",
+  "frameCount": 41,
+  "format": "NOIR grayscale frames v1, 16-byte little-endian header"
+}

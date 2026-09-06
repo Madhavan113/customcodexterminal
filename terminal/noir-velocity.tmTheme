@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>author</key>
+	<string>Personal Codex customization</string>
+	<key>name</key>
+	<string>Noir Velocity</string>
+	<key>settings</key>
+	<array>
+		<dict>
+			<key>settings</key>
+			<dict>
+				<key>background</key>
+				<string>#0C0F11</string>
+				<key>caret</key>
+				<string>#A2CEC6</string>
+				<key>foreground</key>
+				<string>#D8DCD6</string>
+				<key>gutterForeground</key>
+				<string>#76837F</string>
+				<key>lineHighlight</key>
+				<string>#151B1E</string>
+				<key>selection</key>
+				<string>#2E403D</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>name</key>
+			<string>Comments</string>
+			<key>scope</key>
+			<string>comment, punctuation.definition.comment</string>
+			<key>settings</key>
+			<dict>
+				<key>fontStyle</key>
+				<string>italic</string>
+				<key>foreground</key>
+				<string>#83908B</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>name</key>
+			<string>Strings and links</string>
+			<key>scope</key>
+			<string>string, markup.underline.link</string>
+			<key>settings</key>
+			<dict>
+				<key>foreground</key>
+				<string>#A2CEC6</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>name</key>
+			<string>Functions and tags</string>
+			<key>scope</key>
+			<string>entity.name.function, entity.name.tag, support.function</string>
+			<key>settings</key>
+			<dict>
+				<key>foreground</key>
+				<string>#CFC3AE</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>name</key>
+			<string>Types and model</string>
+			<key>scope</key>
+			<string>entity.name.type, support.type, variable</string>
+			<key>settings</key>
+			<dict>
+				<key>foreground</key>
+				<string>#BABFCB</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>name</key>
+			<string>Control flow</string>
+			<key>scope</key>
+			<string>keyword, keyword.control</string>
+			<key>settings</key>
+			<dict>
+				<key>fontStyle</key>
+				<string>bold</string>
+				<key>foreground</key>
+				<string>#CFC3AE</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>name</key>
+			<string>Numbers</string>
+			<key>scope</key>
+			<string>constant, constant.numeric</string>
+			<key>settings</key>
+			<dict>
+				<key>foreground</key>
+				<string>#CFBD96</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>name</key>
+			<string>Language constants</string>
+			<key>scope</key>
+			<string>constant.language, storage.type</string>
+			<key>settings</key>
+			<dict>
+				<key>foreground</key>
+				<string>#BABFCB</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>name</key>
+			<string>Operators and fast mode</string>
+			<key>scope</key>
+			<string>storage.modifier, keyword.operator</string>
+			<key>settings</key>
+			<dict>
+				<key>foreground</key>
+				<string>#A2CEC6</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>name</key>
+			<string>Headings</string>
+			<key>scope</key>
+			<string>markup.heading, entity.name.section</string>
+			<key>settings</key>
+			<dict>
+				<key>fontStyle</key>
+				<string>bold</string>
+				<key>foreground</key>
+				<string>#BABFCB</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>name</key>
+			<string>Additions</string>
+			<key>scope</key>
+			<string>markup.inserted</string>
+			<key>settings</key>
+			<dict>
+				<key>foreground</key>
+				<string>#A6C4A5</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>name</key>
+			<string>Deletions</string>
+			<key>scope</key>
+			<string>markup.deleted</string>
+			<key>settings</key>
+			<dict>
+				<key>foreground</key>
+				<string>#D79588</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>name</key>
+			<string>Emphasis</string>
+			<key>scope</key>
+			<string>markup.italic</string>
+			<key>settings</key>
+			<dict>
+				<key>fontStyle</key>
+				<string>italic</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>name</key>
+			<string>Strong</string>
+			<key>scope</key>
+			<string>markup.bold</string>
+			<key>settings</key>
+			<dict>
+				<key>fontStyle</key>
+				<string>bold</string>
+			</dict>
+		</dict>
+	</array>
+	<key>uuid</key>
+	<string>079BEE15-8AA3-456C-B467-B78C2CA1D3E8</string>
+</dict>
+</plist>

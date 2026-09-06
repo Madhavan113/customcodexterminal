@@ -1,0 +1,2 @@
+# Offline media conversion only; the application has no Python runtime dependency.
+Pillow==12.1.0

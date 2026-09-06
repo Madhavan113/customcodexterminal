@@ -1,0 +1,11 @@
+{
+  "title": "Transit",
+  "width": 160,
+  "height": 90,
+  "fps": 0,
+  "poster": "transit.jpg",
+  "sourceUrl": "https://unsplash.com/photos/a-long-exposure-shot-of-a-moving-subway-train-and-advertisement-posters-at-the-station-S_mEIfXRzIk",
+  "sourceCredit": "Mario Calvo / Unsplash",
+  "frameCount": 1,
+  "format": "NOIR grayscale frames v1, 16-byte little-endian header"
+}
