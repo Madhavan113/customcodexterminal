@@ -17,7 +17,7 @@ import threading
 import time
 
 import pyte
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "output/terminal-preview"
@@ -27,6 +27,7 @@ BG, FG = PALETTE_CONFIG["background"], PALETTE_CONFIG["foreground"]
 PALETTE = {key: value for key, value in PALETTE_CONFIG.items()}
 PALETTE["brown"] = PALETTE["yellow"]
 PALETTE["brightbrown"] = PALETTE["brightyellow"]
+BRAILLE_MASKS = {}
 
 
 class Fixture(http.server.BaseHTTPRequestHandler):
@@ -68,10 +69,18 @@ def color(value, fallback):
 
 def render(screen, label):
     font = ImageFont.truetype("/System/Library/Fonts/Menlo.ttc", 17)
+    dots = ImageFont.truetype("/System/Library/Fonts/Apple Symbols.ttf", 20)
     cell_w, cell_h, padding = 11, 24, 22
     image = Image.new(
         "RGB", (COLUMNS * cell_w + 2 * padding, ROWS * cell_h + 62), "#" + BG
     )
+    wallpaper = ROOT / "terminal/backgrounds/noir-velocity.png"
+    if wallpaper.is_file():
+        with Image.open(wallpaper) as backdrop:
+            image.paste(
+                ImageOps.fit(backdrop, (COLUMNS * cell_w, ROWS * cell_h)),
+                (padding, 42),
+            )
     draw = ImageDraw.Draw(image)
     draw.text((padding, 12), label, font=font, fill="#" + PALETTE_CONFIG["accent"])
     for y in range(ROWS):
@@ -81,14 +90,34 @@ def render(screen, label):
             if cell.reverse:
                 fg, bg = bg, fg
             left, top = padding + x * cell_w, 42 + y * cell_h
-            draw.rectangle((left, top, left + cell_w - 1, top + cell_h - 1), fill=bg)
+            if cell.bg != "default" or cell.reverse:
+                draw.rectangle(
+                    (left, top, left + cell_w - 1, top + cell_h - 1), fill=bg
+                )
             if cell.data.strip():
-                draw.text((left, top), cell.data, font=font, fill=fg)
+                if any(0x2800 <= ord(c) <= 0x28FF for c in cell.data):
+                    if cell.data not in BRAILLE_MASKS:
+                        # Terminal fits fallback fonts to its fixed cell width.
+                        # Apple Symbols has a wider natural advance than Menlo.
+                        mask = Image.new("L", (14, cell_h))
+                        ImageDraw.Draw(mask).text(
+                            (0, 1), cell.data, font=dots, fill=255
+                        )
+                        BRAILLE_MASKS[cell.data] = mask.resize(
+                            (cell_w, cell_h), Image.Resampling.LANCZOS
+                        )
+                    draw.bitmap((left, top), BRAILLE_MASKS[cell.data], fill=fg)
+                else:
+                    draw.text((left, top), cell.data, font=font, fill=fg)
     return image
 
 
-def capture(binary, mode, port, scene="flight", animations=True, ansi256=False):
-    variant = ("-still" if not animations else "") + ("-256" if ansi256 else "")
+def capture(
+    binary, mode, port, scene="coast", animations=True, ansi256=False, style="halftone"
+):
+    variant = (
+        f"-{style}" + ("-still" if not animations else "") + ("-256" if ansi256 else "")
+    )
     preview_dir = OUTPUT / f"{scene}-{mode}-{COLUMNS}x{ROWS}{variant}"
     expect_scene = animations and scene != "off" and COLUMNS >= 44
     preview_dir.mkdir(parents=True, exist_ok=True)
@@ -125,6 +154,7 @@ trust_level = "trusted"
         COLORTERM="truecolor",
         CODEX_NOIR_DRAGON="1",
         CODEX_NOIR_SCENE=scene,
+        CODEX_NOIR_STYLE=style,
     )
     env.pop("NO_COLOR", None)
     env["FORCE_COLOR"] = "2" if ansi256 else "3"
@@ -259,6 +289,7 @@ trust_level = "trusted"
         report = {
             "mode": mode,
             "scene": scene,
+            "style": style,
             "animations": animations,
             "ansi256": ansi256,
             "scene_expected": expect_scene,
@@ -316,7 +347,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("binary", type=Path)
     parser.add_argument("--modes", nargs="+", default=["high"])
-    parser.add_argument("--scenes", nargs="+", default=["flight", "transit"])
+    parser.add_argument("--scenes", nargs="+", default=["coast", "moire"])
+    parser.add_argument("--style", choices=("halftone", "ascii"), default="halftone")
     parser.add_argument("--columns", type=int, default=112)
     parser.add_argument("--rows", type=int, default=30)
     parser.add_argument("--no-motion", action="store_true")
@@ -340,6 +372,7 @@ if __name__ == "__main__":
                     scene,
                     not args.no_motion,
                     args.ansi256,
+                    args.style,
                 )
     finally:
         server.shutdown()

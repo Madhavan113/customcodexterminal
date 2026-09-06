@@ -12,23 +12,26 @@ The project is based on OpenAI Codex 0.153.4. **Edit the canonical renderer file
 
 Within the upstream checkout:
 
-- `codex-rs/tui/src/bottom_pane/chat_composer/noir_dragon.rs` wraps the existing composer in a separately reserved decorative region. The old private names remain for integration compatibility; the new content is photographic ASCII.
+- `codex-rs/tui/src/bottom_pane/chat_composer/noir_dragon.rs` wraps the existing composer in a separately reserved decorative region. The old private names remain for integration compatibility; the content is photographic halftone/ASCII and a Moire field.
 - `noir_dragon_tests.rs` beside it covers layout, cursor/draft safety, animation lifecycle, and snapshots.
 - `noir_photo.rs` parses and samples bounded grayscale frames; its tests are in `noir_photo_tests.rs`. All `noir_*.rs` modules have matching editable files under this repo's `src/`.
+- `noir_halftone.rs` handles Braille/ASCII painting, photographic crop geometry, a deterministic Moire field, and color adaptation. Its tests live in `noir_halftone_tests.rs`.
 - `noir_activity.rs` and its tests paint the existing activity rail in an unused composer border. Effort labels reflect actual settings.
 - `chat_composer.rs` and `bottom_pane/mod.rs` contain the existing integration. Keep edits out of their input/paste state machines.
 - `chatwidget/rendering.rs` composes the active transcript with the bottom pane at zero flex; its existing wrapper geometry gives input priority when the scene cannot fit. The render implementation is in this submodule, not the large `chatwidget.rs` file.
 - `codex-rs/tui/assets/noir/` holds embedded luminance frames. The existing `assets/**` Bazel compile-data glob covers them.
 
-The scene must yield space to typed input, vanish for popups or insufficient geometry, keep buffer accesses bounded, and never overwrite nonblank content. Animation advances only during visible work; its clock resets while idle or hidden. `-c tui.animations=false`, `CODEX_NOIR_SCENE=off`, and the legacy `CODEX_NOIR_DRAGON=0` must disable it. Respect terminal color capabilities and both dark and light backgrounds. The renderer precomputes 16 tones per frame to avoid a full 256-color search for every image cell.
+The scene must yield space to typed input, vanish for popups or insufficient geometry, keep buffer accesses bounded, and never overwrite nonblank content. Animation advances only during visible work; its clock resets while idle or hidden. `-c tui.animations=false`, `CODEX_NOIR_SCENE=off`, and the legacy `CODEX_NOIR_DRAGON=0` must disable it. Respect terminal color capabilities and both dark and light backgrounds. The renderer precomputes colors per frame to avoid a full 256-color search for every image dot. Coast is the default scene; `CODEX_NOIR_STYLE=halftone|ascii` selects the treatment, defaulting to halftone.
 
 ## Visual direction
 
 Reference: https://madhavanprasanna.com/. Its real birds-in-flight MP4 becomes a fine textured image grid. Bring that sense of velocity into terminal glyphs: continuous motion, photographic forms, controlled grain, negative space, restrained color. Keep normal code and conversation highly legible.
 
-Use actual photographs or sampled footage as glyph source data. No generated AI imagery, cartoon dragon, fake telemetry, arbitrary glitch spam, or ornamental rainbow effects. Flight uses frames from the user's website; Transit uses Mario Calvo's long-exposure subway photograph. Sources are recorded in `assets/SOURCES.md`.
+Use actual photographs or sampled footage as glyph source data. No generated AI imagery, cartoon dragon, fake telemetry, arbitrary glitch spam, or ornamental rainbow effects. Flight uses frames from the user's website; Transit uses Mario Calvo's long-exposure subway photograph; Coast uses focal insight photography's rocky coast. Sources are recorded in `assets/SOURCES.md`.
 
-The `.nrf` format is grayscale source data, not prebuilt terminal escape sequences. A 16-byte little-endian header contains magic `NOIR`, version u16, width u16, height u16, FPS u16 (zero for stills), and frame count u32, followed by row-major u8 pixels for every frame. The renderer alone emits safe display glyphs. Current inputs are 160×90; Flight has 41 frames at 12 FPS and Transit has one frame.
+The user's later references add lavender and pale acid-yellow halftones, rocky silhouettes, and warped rounded-square/dot interference. The `moire` scene is explicitly allowed to use a deterministic mathematical field to interpret the abstract reference. The native macOS Terminal wallpaper combines the Coast photograph with a very faint stationary field on dark violet. `scripts/prepare-background.py` builds it; `scripts/install-terminal.py` installs it with a native image bookmark. The wallpaper is static; the TUI scene supplies the motion. Keep the regular text and command area legible.
+
+The `.nrf` format is grayscale source data, not prebuilt terminal escape sequences. A 16-byte little-endian header contains magic `NOIR`, version u16, width u16, height u16, FPS u16 (zero for stills), and frame count u32, followed by row-major u8 pixels for every frame. The renderer alone emits safe display glyphs. Current inputs are 160×90; Flight has 41 frames at 12 FPS, and Transit and Coast each have one frame.
 
 Parser limits are 256×144, 256 frames, and 24 FPS. A zero-FPS still has exactly one frame. Keep parser and converter limits consistent when changing the asset pipeline.
 

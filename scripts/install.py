@@ -49,8 +49,11 @@ def validate(args):
         STAGING / "bin/codex-noir",
         STAGING / "README.md",
         STAGING / "src/noir_dragon.rs",
+        STAGING / "src/noir_halftone.rs",
+        STAGING / "assets/coast.nrf",
         STAGING / "assets/flight.nrf",
         STAGING / "assets/transit.nrf",
+        STAGING / "terminal/backgrounds/noir-velocity.png",
         STOCK / "codex-package.json",
         *(STOCK / relative for relative in COMPANIONS),
     ]
@@ -145,6 +148,7 @@ def build_package(stage, args):
         ".snap",
         ".nrf",
         ".jpg",
+        ".png",
         ".json",
         ".md",
         ".patch",
@@ -168,7 +172,7 @@ def build_package(stage, args):
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
     provenance = {
-        "customization": "Codex Noir terminal-only photographic ASCII build",
+        "customization": "Codex Noir terminal-only photographic halftone and ASCII build",
         "official_release_binary": False,
         "upstream_version": VERSION,
         "upstream_tag": SOURCE_TAG,

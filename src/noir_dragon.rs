@@ -1,18 +1,22 @@
-//! A photographic ASCII study in its own reserved rows above the composer.
+//! A photographic study in its own reserved rows above the composer.
 //!
-//! Real luminance data drives every glyph: Flight loops frames of birds taking
-//! off from the user's homepage footage, and Transit drifts across Mario
-//! Calvo's long-exposure subway still. The picture sits to the right of a quiet
-//! label so the negative space reads as deliberate. It only moves while a task
-//! is running; idle, it holds a dimmer first frame and schedules nothing.
+//! Real luminance data drives every glyph. Coast, the default, is a still of a
+//! rocky shoreline; Flight loops frames of birds taking off from the user's
+//! homepage footage; Transit is Mario Calvo's long-exposure subway still. Moiré
+//! is the one exception: a deterministic interference field rather than a
+//! photograph. The picture sits to the right of a quiet label so the negative
+//! space reads as deliberate. It only moves while a task is running; idle, it
+//! holds a dimmer first frame and schedules nothing.
 //!
-//! Typed input keeps priority. The scene shrinks or vanishes when the terminal
-//! is narrow or short, for popups, disabled input, `tui.animations=false`, and
-//! terminals without 256-color support. `CODEX_NOIR_SCENE=flight|transit|off`
-//! selects the study; the legacy `CODEX_NOIR_DRAGON=0` still disables it.
+//! `CODEX_NOIR_STYLE=halftone|ascii` chooses between the Braille line-screen
+//! halftone (default) and the original ASCII density ramp; both live in
+//! `noir_halftone.rs`. Typed input keeps priority: the scene shrinks or
+//! vanishes when the terminal is narrow or short, for popups, disabled input,
+//! `tui.animations=false`, and terminals without 256-color support.
+//! `CODEX_NOIR_SCENE=coast|flight|transit|moire|off` selects the study and the
+//! legacy `CODEX_NOIR_DRAGON=0` still disables it.
 
 use std::cell::Cell;
-use std::f32::consts::TAU;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -21,43 +25,47 @@ use ratatui::layout::Rect;
 
 use super::ChatComposer;
 use super::popup_state::ActivePopup;
-use crate::color::blend;
-use crate::color::is_light;
 use crate::render::renderable::Renderable;
 use crate::render::renderable::RenderableItem;
 use crate::terminal_palette::StdoutColorLevel;
-use crate::terminal_palette::best_color_for_level;
 use crate::terminal_palette::default_bg;
 use crate::terminal_palette::effective_stdout_color_level;
 
+#[path = "noir_halftone.rs"]
+mod noir_halftone;
 #[path = "noir_photo.rs"]
 mod noir_photo;
 
+use noir_halftone::Palette;
+use noir_halftone::Shot;
 use noir_photo::Study;
 
 const MIN_WIDTH: u16 = 44;
 const MIN_ROWS: u16 = 5;
 /// Cells are about twice as tall as they are wide, so a 16:9 frame at true aspect spans 3.6
-/// columns per row. Widening to 5.2 columns with a mild vertical squeeze and a centered crop
+/// columns per row. Widening to 5.2 columns with a mild vertical squeeze and an anchored crop
 /// keeps the picture recognizable while leaving the left of the scene to the label.
 const COLUMNS_PER_ROW: f32 = 5.2;
-const SQUEEZE: f32 = 1.25;
 const STILL_TICK: Duration = Duration::from_millis(100);
-const RAMP: &[u8] = b" .:-=+*#%@";
-const GRAIN: f32 = 0.09;
-const BAYER: [[u8; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
-const SLIP_CYCLE: Duration = Duration::from_millis(4300);
-const SLIP_HOLD: Duration = Duration::from_millis(250);
 
-/// Which photographic study occupies the scene.
+/// Which study occupies the scene.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Scene {
+    Coast,
     Flight,
     Transit,
+    Moire,
+}
+
+/// Where a scene's ink comes from: embedded luminance, or the mathematical Moiré field.
+#[derive(Clone, Copy)]
+enum Source<'a> {
+    Photo(&'a Study<'a>),
+    Field,
 }
 
 impl Scene {
-    /// `CODEX_NOIR_SCENE` picks the study and unknown values keep Flight. Either it or the
+    /// `CODEX_NOIR_SCENE` picks the study and unknown values keep Coast. Either it or the
     /// legacy `CODEX_NOIR_DRAGON` switch turns the scene off with `0`, `false`, or `off`.
     fn from_preferences(scene: Option<&str>, legacy: Option<&str>) -> Option<Self> {
         let normalized = |value: Option<&str>| value.map(|value| value.trim().to_ascii_lowercase());
@@ -68,42 +76,79 @@ impl Scene {
             return None;
         }
         Some(match scene.as_deref() {
+            Some("flight") => Self::Flight,
             Some("transit") => Self::Transit,
-            _ => Self::Flight,
+            Some("moire" | "moiré") => Self::Moire,
+            _ => Self::Coast,
         })
     }
 
-    fn study(self) -> Option<&'static Study<'static>> {
+    fn source(self) -> Option<Source<'static>> {
         match self {
-            Self::Flight => noir_photo::FLIGHT.as_ref(),
-            Self::Transit => noir_photo::TRANSIT.as_ref(),
+            Self::Coast => noir_photo::COAST.as_ref().map(Source::Photo),
+            Self::Flight => noir_photo::FLIGHT.as_ref().map(Source::Photo),
+            Self::Transit => noir_photo::TRANSIT.as_ref().map(Source::Photo),
+            Self::Moire => Some(Source::Field),
+        }
+    }
+
+    /// Vertical anchor of the crop. The coastline keeps its rocks and horizon by leaning low.
+    fn focus(self) -> f32 {
+        match self {
+            Self::Coast => 0.6,
+            Self::Flight | Self::Transit | Self::Moire => 0.5,
         }
     }
 
     fn label(self) -> &'static str {
         match self {
+            Self::Coast => "C O A S T",
             Self::Flight => "F L I G H T",
             Self::Transit => "T R A N S I T",
+            Self::Moire => "M O I R E",
         }
     }
 
     fn credit(self) -> &'static str {
         match self {
+            Self::Coast => "photo by focal insight",
             Self::Flight => "madhavanprasanna.com",
             Self::Transit => "photo by mario calvo",
+            Self::Moire => "interference field",
+        }
+    }
+}
+
+/// How ink becomes glyphs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Style {
+    Halftone,
+    Ascii,
+}
+
+impl Style {
+    /// `CODEX_NOIR_STYLE=ascii` restores the density ramp; anything else is the halftone.
+    fn from_preference(style: Option<&str>) -> Self {
+        match style
+            .map(|value| value.trim().to_ascii_lowercase())
+            .as_deref()
+        {
+            Some("ascii") => Self::Ascii,
+            _ => Self::Halftone,
         }
     }
 }
 
 /// Whether the scene is playing, and for how long the current task has run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Motion {
+pub(super) enum Motion {
     Idle,
     Working(Duration),
 }
 
 pub(super) struct NoirDragon {
     scene: Option<Scene>,
+    style: Style,
     started_at: Cell<Option<Instant>>,
 }
 
@@ -112,14 +157,16 @@ impl Default for NoirDragon {
         Self::from_preferences(
             std::env::var("CODEX_NOIR_SCENE").ok().as_deref(),
             std::env::var("CODEX_NOIR_DRAGON").ok().as_deref(),
+            std::env::var("CODEX_NOIR_STYLE").ok().as_deref(),
         )
     }
 }
 
 impl NoirDragon {
-    fn from_preferences(scene: Option<&str>, legacy: Option<&str>) -> Self {
+    fn from_preferences(scene: Option<&str>, legacy: Option<&str>, style: Option<&str>) -> Self {
         Self {
             scene: Scene::from_preferences(scene, legacy),
+            style: Style::from_preference(style),
             started_at: Cell::new(None),
         }
     }
@@ -140,7 +187,7 @@ impl NoirDragon {
 }
 
 #[derive(Clone, Copy)]
-struct Appearance {
+pub(super) struct Appearance {
     background: (u8, u8, u8),
     color_level: StdoutColorLevel,
 }
@@ -184,9 +231,9 @@ fn rows_for_width(width: u16) -> u16 {
 }
 
 impl DragonComposer<'_> {
-    fn scene(&self) -> Option<(Scene, &'static Study<'static>)> {
+    fn scene(&self) -> Option<(Scene, Source<'static>)> {
         let scene = self.composer.noir_dragon.scene?;
-        Some((scene, scene.study()?))
+        Some((scene, scene.source()?))
     }
 
     fn scene_height(&self, width: u16) -> u16 {
@@ -243,37 +290,44 @@ impl Renderable for DragonComposer<'_> {
         let motion = self.composer.noir_dragon.motion_at(Instant::now(), working);
         if !picture.is_empty()
             && let Some(appearance) = self.appearance
-            && let Some((scene, study)) = self.scene()
+            && let Some((scene, source)) = self.scene()
         {
-            paint(scene, motion, picture, buf, appearance);
+            let style = self.composer.noir_dragon.style;
+            paint(scene, style, motion, picture, buf, appearance);
             if working && let Some(requester) = &self.composer.frame_requester {
-                requester.schedule_frame_in(study.frame_interval().unwrap_or(STILL_TICK));
+                let tick = match source {
+                    Source::Photo(study) => study.frame_interval().unwrap_or(STILL_TICK),
+                    Source::Field => STILL_TICK,
+                };
+                requester.schedule_frame_in(tick);
             }
         }
         self.inner.render(content, buf);
     }
 }
 
-/// Paints the label into the negative space and the photograph into a right-aligned panel.
+/// Paints the label into the negative space and the study into a right-aligned panel.
 /// Only blank cells inside `area` change, so drafts, selections, and popups are never touched.
-fn paint(scene: Scene, motion: Motion, area: Rect, buf: &mut Buffer, appearance: Appearance) {
+fn paint(
+    scene: Scene,
+    style: Style,
+    motion: Motion,
+    area: Rect,
+    buf: &mut Buffer,
+    appearance: Appearance,
+) {
     let area = area.intersection(buf.area);
-    let Some(study) = scene.study() else {
+    let Some(source) = scene.source() else {
         return;
     };
     if area.width < MIN_WIDTH || area.height < MIN_ROWS {
         return;
     }
-    let light = is_light(appearance.background);
-    let (base, accent) = if light {
-        ((56, 48, 42), (0, 105, 122))
-    } else {
-        ((236, 228, 214), (138, 246, 255))
-    };
     let presence = match motion {
         Motion::Idle => 0.6,
         Motion::Working(_) => 1.0,
     };
+    let palette = Palette::new(appearance, presence);
     let panel_width =
         ((f32::from(area.height) * COLUMNS_PER_ROW).round() as u16).min(area.width - 4);
     let panel = Rect::new(
@@ -284,17 +338,16 @@ fn paint(scene: Scene, motion: Motion, area: Rect, buf: &mut Buffer, appearance:
     );
 
     let free = usize::from(panel.x.saturating_sub(area.x).saturating_sub(3));
-    for (row, (text, strength)) in [(scene.label(), 0.55), (scene.credit(), 0.30)]
-        .into_iter()
-        .enumerate()
+    for (row, (text, color)) in [
+        (scene.label(), palette.label),
+        (scene.credit(), palette.credit),
+    ]
+    .into_iter()
+    .enumerate()
     {
         if text.len() > free || (row > 0 && area.height < 8) {
             break;
         }
-        let color = best_color_for_level(
-            blend(base, appearance.background, strength * presence),
-            appearance.color_level,
-        );
         for (column, glyph) in text.chars().enumerate() {
             let cell = &mut buf[(area.x + 2 + column as u16, area.y + row as u16)];
             if glyph != ' ' && cell.symbol() == " " {
@@ -303,88 +356,10 @@ fn paint(scene: Scene, motion: Motion, area: Rect, buf: &mut Buffer, appearance:
         }
     }
 
-    let elapsed = match motion {
-        Motion::Idle => None,
-        Motion::Working(elapsed) => Some(elapsed),
-    };
-    let seconds = elapsed.as_ref().map_or(0.0, Duration::as_secs_f32);
-    let frame = elapsed.map_or(0, |elapsed| study.frame_at(elapsed));
-    let still = study.frame_interval().is_none();
-    let source_width = study.width as f32;
-    let source_height = study.height as f32;
-    // A still glides sideways across a slightly narrower crop; footage carries its own motion.
-    let pan_margin = if still {
-        (source_width * 0.045).ceil()
-    } else {
-        0.0
-    };
-    let pan = if elapsed.is_some() {
-        pan_margin * (seconds * TAU / 16.0).sin()
-    } else {
-        0.0
-    };
-    // Grain drifts in the direction of travel, faster over the still than over footage.
-    let grain_phase = (seconds * if still { 6.0 } else { 2.5 }) as usize;
-    // A brief scan slip: two rows shift sideways for a quarter second every few seconds.
-    let slip = elapsed.and_then(|elapsed| {
-        let cycle = elapsed.as_millis() / SLIP_CYCLE.as_millis();
-        let holding = elapsed.as_millis() % SLIP_CYCLE.as_millis() < SLIP_HOLD.as_millis();
-        (cycle > 0 && holding).then(|| {
-            let start = (cycle as usize * 3) % usize::from(area.height - 1);
-            let shift = if cycle.is_multiple_of(2) { 1.5 } else { -1.5 };
-            (start as u16, shift)
-        })
-    });
-
-    let column_px = (source_width - 2.0 * pan_margin) / f32::from(panel.width);
-    let crop_height = (2.0 * column_px * f32::from(panel.height) * SQUEEZE).min(source_height);
-    let row_px = crop_height / f32::from(panel.height);
-    let x_origin = pan_margin + pan;
-    let y_origin = (source_height - crop_height) / 2.0;
-    let steps = (RAMP.len() - 1) as f32;
-    // Quantize color separately from glyph density. A small palette avoids
-    // searching all 256 terminal colors for every image cell on every frame.
-    let tones = std::array::from_fn::<_, 16, _>(|index| {
-        let ink = index as f32 / 15.0;
-        let highlight = ((ink - 0.85) / 0.15).clamp(0.0, 1.0) * 0.4;
-        let tone = blend(accent, base, highlight);
-        best_color_for_level(
-            blend(tone, appearance.background, (0.28 + 0.72 * ink) * presence),
-            appearance.color_level,
-        )
-    });
-    for row in 0..panel.height {
-        let slip_px = match slip {
-            Some((start, shift)) if (start..=start + 1).contains(&row) => shift * column_px,
-            _ => 0.0,
-        };
-        let y0 = y_origin + f32::from(row) * row_px;
-        let y1 = y0 + row_px;
-        for column in 0..panel.width {
-            let cell = &mut buf[(panel.x + column, panel.y + row)];
-            if cell.symbol() != " " {
-                continue;
-            }
-            let x0 = x_origin + f32::from(column) * column_px + slip_px;
-            let x1 = x0 + column_px;
-            let luminance = study.mean_luminance(
-                frame,
-                x0.floor() as i32,
-                y0.floor() as i32,
-                x1.ceil() as i32,
-                y1.ceil() as i32,
-            );
-            let contrast = ((luminance - 0.5) * 1.25 + 0.5).clamp(0.0, 1.0);
-            let ink = if light { 1.0 - contrast } else { contrast };
-            let grain = BAYER[usize::from(row) % 4][(usize::from(column) + grain_phase) % 4];
-            let dither = (f32::from(grain) - 7.5) / 16.0 * GRAIN;
-            let level = ((ink + dither) * steps).round().clamp(0.0, steps) as usize;
-            if level == 0 {
-                continue;
-            }
-            cell.set_char(RAMP[level] as char)
-                .set_fg(tones[(ink * 15.0).round() as usize]);
-        }
+    let shot = Shot::new(source, scene.focus(), panel, motion, palette.light);
+    match style {
+        Style::Halftone => noir_halftone::paint_braille(&shot, panel, buf, &palette),
+        Style::Ascii => noir_halftone::paint_ascii(&shot, panel, buf, &palette),
     }
 }
 

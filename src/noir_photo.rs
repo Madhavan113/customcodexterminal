@@ -13,6 +13,10 @@ const MAGIC: &[u8; 4] = b"NOIR";
 const VERSION: u16 = 1;
 const HEADER_LEN: usize = 16;
 
+/// Focal Insight's photograph of a rocky coastline.
+pub(super) static COAST: LazyLock<Option<Study<'static>>> =
+    LazyLock::new(|| Study::parse(include_bytes!("../../../assets/noir/coast.nrf")));
+
 /// Birds taking flight, sampled from the user's homepage footage.
 pub(super) static FLIGHT: LazyLock<Option<Study<'static>>> =
     LazyLock::new(|| Study::parse(include_bytes!("../../../assets/noir/flight.nrf")));
