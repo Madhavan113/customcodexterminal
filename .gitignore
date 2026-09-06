@@ -1,0 +1,19 @@
+# Generated applications and downloaded vendor archives
+build/
+downloads/
+
+# Local QA artifacts and agent conversations
+output/
+.playwright-cli/
+.claude/settings.local.json
+.agents-local/
+
+# Local dependencies, credentials, and OS files
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+.DS_Store
