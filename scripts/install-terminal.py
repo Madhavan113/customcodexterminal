@@ -2,10 +2,12 @@
 """Install the Noir shell prompt and terminal profile with timestamped backups."""
 
 import argparse
+import base64
 from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import plistlib
 import shutil
 import subprocess
 
@@ -14,6 +16,27 @@ SHELL_LINE = (
     '[[ -r "$HOME/.config/zsh/noir.zsh" ]] && source "$HOME/.config/zsh/noir.zsh"'
 )
 OLD_LINE = '[[ -r "$HOME/.config/zsh/overdrive.zsh" ]] && source "$HOME/.config/zsh/overdrive.zsh"'
+
+
+def background_bookmark(path):
+    """Use Foundation's native file bookmark, as Terminal's profile expects."""
+    script = """ObjC.import('Foundation');
+    function run(argv) {
+        var url = $.NSURL.fileURLWithPath(argv[0]);
+        var error = Ref();
+        var bookmark = url.bookmarkDataWithOptionsIncludingResourceValuesForKeysRelativeToURLError(0, $(), $(), error);
+        if (!bookmark) throw new Error('Could not create the background image bookmark');
+        var archive = $.NSKeyedArchiver.archivedDataWithRootObject(bookmark);
+        return ObjC.unwrap(archive.base64EncodedStringWithOptions(0));
+    }"""
+    result = subprocess.run(
+        ["osascript", "-l", "JavaScript", "-e", script, str(path)],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    return base64.b64decode(result.stdout.strip(), validate=True)
 
 
 def activate_profile(profile):
@@ -56,6 +79,12 @@ def activate_profile(profile):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
+        "--background",
+        choices=("moire", "plain"),
+        default="moire",
+        help="Use the subtle photographic/pattern wallpaper or a solid color",
+    )
+    parser.add_argument(
         "--apply",
         action="store_true",
         help="Install; default previews the affected paths",
@@ -72,6 +101,7 @@ def main():
     )
     codex_dir = Path(os.environ.get("CODEX_HOME", user_dir / ".codex")).expanduser()
     profile = user_dir / ".config/terminal/Noir Velocity.terminal"
+    wallpaper = user_dir / ".config/terminal/backgrounds/noir-velocity.png"
     content = shell_rc.read_text() if shell_rc.exists() else ""
     lines = content.splitlines()
     if OLD_LINE in lines:
@@ -79,6 +109,7 @@ def main():
     if SHELL_LINE not in lines:
         lines += ["", "# Codex Noir terminal prompt.", SHELL_LINE]
     files = {
+        wallpaper: (ROOT / "terminal/backgrounds/noir-velocity.png").read_bytes(),
         user_dir / ".config/zsh/noir.zsh": (ROOT / "terminal/noir.zsh").read_bytes(),
         profile: (ROOT / "terminal/Noir Velocity.terminal").read_bytes(),
         codex_dir / "themes/noir-velocity.tmTheme": (
@@ -88,6 +119,7 @@ def main():
     }
     for path in files:
         print(path)
+    print(f"Terminal background: {args.background}")
     if not args.apply:
         print(
             "Preview only. Add --apply to install; --activate-profile also updates macOS Terminal."
@@ -118,6 +150,13 @@ def main():
     try:
         for destination, data in files.items():
             destination.parent.mkdir(parents=True, exist_ok=True)
+            if destination == profile:
+                settings = plistlib.loads(data)
+                settings.pop("BackgroundImagePath", None)
+                settings.pop("BackgroundImageBookmark", None)
+                if args.background == "moire":
+                    settings["BackgroundImageBookmark"] = background_bookmark(wallpaper)
+                data = plistlib.dumps(settings)
             temporary = destination.with_name(destination.name + ".noir-tmp")
             temporary.write_bytes(data)
             temporary.chmod(

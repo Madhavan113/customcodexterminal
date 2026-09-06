@@ -13,7 +13,7 @@ fi
 _codex_noir_prompt() {
   local last_status=$?
   emulate -L zsh
-  local branch='' muted='%F{8}' accent='%F{14}' normal='%f'
+  local branch='' muted='%F{8}' accent='%F{13}' normal='%f'
   local marker='››'
   [[ -n ${NO_COLOR-} ]] && muted='' accent='' normal=''
 

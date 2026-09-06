@@ -1,0 +1,11 @@
+{
+  "title": "Coast",
+  "width": 160,
+  "height": 90,
+  "fps": 0,
+  "frameCount": 1,
+  "format": "NOIR grayscale frames v1, 16-byte little-endian header",
+  "poster": "coast.jpg",
+  "sourceUrl": "https://unsplash.com/photos/a-rocky-cliff-next-to-a-body-of-water-UNQf309jCvg",
+  "sourceCredit": "focal insight photography / Unsplash"
+}
