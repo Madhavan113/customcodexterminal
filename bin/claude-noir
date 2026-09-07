@@ -1,0 +1,40 @@
+#!/bin/sh
+# Claude Code in the Noir terminal layout: the mascot dances in a small pane above the real
+# `claude`, which keeps its own authentication, settings, and arguments.
+set -eu
+
+share="$HOME/.local/share/claude-noir"
+dancer="$share/dancer.py"
+conf="$share/tmux.conf"
+rows="${CLAUDE_NOIR_ROWS:-7}"
+
+if ! command -v claude >/dev/null 2>&1; then
+    printf '%s\n' "claude-noir: the claude command is not installed" >&2
+    exit 127
+fi
+if ! command -v tmux >/dev/null 2>&1 || [ ! -f "$dancer" ] || [ "${CLAUDE_NOIR_DANCER-}" = "off" ]; then
+    # Without tmux or the dancer, run Claude Code directly so nothing is lost.
+    exec claude "$@"
+fi
+if [ -n "${TMUX-}" ]; then
+    # Already inside tmux: nesting servers is confusing, so run plainly.
+    exec claude "$@"
+fi
+
+# Quote every argument for tmux's shell command string.
+command='claude'
+for argument in "$@"; do
+    quoted=$(printf '%s' "$argument" | sed "s/'/'\\\\''/g")
+    command="$command '$quoted'"
+done
+
+session="claude-noir-$$"
+socket="claude-noir"
+columns=$(tput cols 2>/dev/null || echo 120)
+lines=$(tput lines 2>/dev/null || echo 40)
+
+tmux -L "$socket" -f "$conf" new-session -d -s "$session" -x "$columns" -y "$lines" \
+    "$command; tmux -L $socket kill-session -t $session"
+tmux -L "$socket" split-window -t "$session" -b -l "$rows" "python3 '$dancer'"
+tmux -L "$socket" select-pane -t "$session:.{bottom}"
+exec tmux -L "$socket" attach-session -t "$session"

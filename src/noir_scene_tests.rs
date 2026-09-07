@@ -20,6 +20,18 @@ fn light_appearance() -> Appearance {
     }
 }
 
+/// The existing scene tests paint at cruise; drive-specific tests call `super::paint`.
+fn paint(
+    scene: Scene,
+    style: Style,
+    motion: Motion,
+    area: Rect,
+    buf: &mut Buffer,
+    appearance: Appearance,
+) {
+    super::paint(scene, style, motion, Drive::Cruise, area, buf, appearance);
+}
+
 fn rows(buf: &Buffer) -> Vec<String> {
     let area = buf.area;
     (area.top()..area.bottom())
@@ -42,6 +54,7 @@ fn noir_scene_preferences_select_scene_and_style_and_honor_legacy_switch() {
         (Some("transit"), None),
         (Some(" Transit "), None),
         (Some("moire"), None),
+        (Some("dither"), None),
         (Some("dragon"), None),
         (Some("off"), None),
         (Some("0"), None),
@@ -53,13 +66,14 @@ fn noir_scene_preferences_select_scene_and_style_and_honor_legacy_switch() {
     assert_eq!(
         cases.map(|(scene, legacy)| Scene::from_preferences(scene, legacy)),
         [
-            Some(Scene::Coast),
+            Some(Scene::Dither),
             Some(Scene::Coast),
             Some(Scene::Flight),
             Some(Scene::Transit),
             Some(Scene::Transit),
             Some(Scene::Moire),
-            Some(Scene::Coast),
+            Some(Scene::Dither),
+            Some(Scene::Dither),
             None,
             None,
             None,
@@ -75,31 +89,91 @@ fn noir_scene_preferences_select_scene_and_style_and_honor_legacy_switch() {
             Some("ascii"),
             Some(" ASCII "),
             Some("braille"),
+            Some("dither"),
+            Some(" Bayer "),
         ]
         .map(Style::from_preference),
         [
-            Style::Halftone,
-            Style::Halftone,
-            Style::Ascii,
-            Style::Ascii,
-            Style::Halftone,
+            None,
+            Some(Style::Halftone),
+            Some(Style::Ascii),
+            Some(Style::Ascii),
+            None,
+            Some(Style::Dither),
+            Some(Style::Dither),
         ]
     );
+    // Photographs default to the halftone and the Dither scene to the ordered dither, unless a
+    // style is set explicitly.
+    let unset = NoirScene::from_preferences(
+        /*scene*/ None, /*legacy*/ None, /*style*/ None,
+    );
+    let ascii = NoirScene::from_preferences(Some("dither"), /*legacy*/ None, Some("ascii"));
+    assert_eq!(
+        [
+            unset.style_for(Scene::Coast),
+            unset.style_for(Scene::Moire),
+            unset.style_for(Scene::Dither),
+            ascii.style_for(Scene::Coast),
+            ascii.style_for(Scene::Dither),
+        ],
+        [
+            Style::Halftone,
+            Style::Halftone,
+            Style::Dither,
+            Style::Ascii,
+            Style::Ascii,
+        ]
+    );
+    // Effort tiers pick the drive unless CODEX_NOIR_DRIVE pins one.
+    assert_eq!(
+        [None, Some(EffortTier::Max), Some(EffortTier::Ultra)].map(Drive::from_tier),
+        [Drive::Cruise, Drive::Overdrive, Drive::Warp]
+    );
+    assert_eq!(
+        [
+            None,
+            Some("cruise"),
+            Some("off"),
+            Some(" Overdrive "),
+            Some("max"),
+            Some("warp"),
+            Some("ultra"),
+            Some("ludicrous"),
+        ]
+        .map(Drive::from_preference),
+        [
+            None,
+            Some(Drive::Cruise),
+            Some(Drive::Cruise),
+            Some(Drive::Overdrive),
+            Some(Drive::Overdrive),
+            Some(Drive::Warp),
+            Some(Drive::Warp),
+            None,
+        ]
+    );
+    let mut pinned = NoirScene::from_preferences(
+        /*scene*/ None, /*legacy*/ None, /*style*/ None,
+    );
+    assert_eq!(pinned.drive_for(Some(EffortTier::Ultra)), Drive::Warp);
+    pinned.drive = Some(Drive::Cruise);
+    assert_eq!(pinned.drive_for(Some(EffortTier::Ultra)), Drive::Cruise);
 }
 
 #[test]
 fn noir_scene_clock_runs_only_while_working_and_restarts_after_rest() {
-    let dragon = NoirDragon::from_preferences(
+    let scene = NoirScene::from_preferences(
         /*scene*/ None, /*legacy*/ None, /*style*/ None,
     );
     let now = Instant::now();
     assert_eq!(
         [
-            dragon.motion_at(now, /*working*/ false),
-            dragon.motion_at(now, /*working*/ true),
-            dragon.motion_at(now + Duration::from_secs(60), /*working*/ true),
-            dragon.motion_at(now + Duration::from_secs(61), /*working*/ false),
-            dragon.motion_at(now + Duration::from_secs(62), /*working*/ true),
+            scene.motion_at(now, /*working*/ false),
+            scene.motion_at(now, /*working*/ true),
+            scene.motion_at(now + Duration::from_secs(60), /*working*/ true),
+            scene.motion_at(now + Duration::from_secs(61), /*working*/ false),
+            scene.motion_at(now + Duration::from_secs(62), /*working*/ true),
         ],
         [
             Motion::Idle,
@@ -129,11 +203,11 @@ impl Renderable for Draft {
 fn noir_scene_reserves_rows_only_when_input_still_fits() {
     let (mut composer, _rx) = super::super::tests::new_test_composer();
     composer.set_noir_animations_enabled(/*enabled*/ true);
-    composer.noir_dragon =
-        NoirDragon::from_preferences(Some("transit"), /*legacy*/ None, /*style*/ None);
+    composer.noir_scene =
+        NoirScene::from_preferences(Some("transit"), /*legacy*/ None, /*style*/ None);
     for width in [12, 43, 44, 79, 80, 111, 112, 160] {
         for height in [0, 3, 7, 8, 9, 11, 13, 20] {
-            let wrapper = DragonComposer {
+            let wrapper = SceneComposer {
                 composer: &composer,
                 inner: RenderableItem::Borrowed(&Draft),
                 appearance: Some(appearance()),
@@ -179,8 +253,8 @@ fn noir_scene_reserves_rows_only_when_input_still_fits() {
         (None, Some("0")),
         (Some("transit"), Some("false")),
     ] {
-        composer.noir_dragon = NoirDragon::from_preferences(scene, legacy, /*style*/ None);
-        let wrapper = DragonComposer {
+        composer.noir_scene = NoirScene::from_preferences(scene, legacy, /*style*/ None);
+        let wrapper = SceneComposer {
             composer: &composer,
             inner: RenderableItem::Borrowed(&Draft),
             appearance: Some(appearance()),
@@ -191,11 +265,11 @@ fn noir_scene_reserves_rows_only_when_input_still_fits() {
             "{scene:?} {legacy:?}"
         );
     }
-    composer.noir_dragon = NoirDragon::from_preferences(
+    composer.noir_scene = NoirScene::from_preferences(
         /*scene*/ None, /*legacy*/ None, /*style*/ None,
     );
     {
-        let wrapper = DragonComposer {
+        let wrapper = SceneComposer {
             composer: &composer,
             inner: RenderableItem::Borrowed(&Draft),
             appearance: None,
@@ -204,7 +278,7 @@ fn noir_scene_reserves_rows_only_when_input_still_fits() {
     }
     composer.set_text_content("/".to_string(), Vec::new(), Vec::new());
     {
-        let wrapper = DragonComposer {
+        let wrapper = SceneComposer {
             composer: &composer,
             inner: RenderableItem::Borrowed(&Draft),
             appearance: Some(appearance()),
@@ -214,7 +288,7 @@ fn noir_scene_reserves_rows_only_when_input_still_fits() {
     composer.set_text_content(String::new(), Vec::new(), Vec::new());
     composer.set_input_enabled(/*enabled*/ false, /*placeholder*/ None);
     {
-        let wrapper = DragonComposer {
+        let wrapper = SceneComposer {
             composer: &composer,
             inner: RenderableItem::Borrowed(&Draft),
             appearance: Some(appearance()),
@@ -223,7 +297,7 @@ fn noir_scene_reserves_rows_only_when_input_still_fits() {
     }
     composer.set_input_enabled(/*enabled*/ true, /*placeholder*/ None);
     composer.set_noir_animations_enabled(/*enabled*/ false);
-    let wrapper = DragonComposer {
+    let wrapper = SceneComposer {
         composer: &composer,
         inner: RenderableItem::Borrowed(&Draft),
         appearance: Some(appearance()),
@@ -235,14 +309,14 @@ fn noir_scene_reserves_rows_only_when_input_still_fits() {
 fn noir_scene_resets_playback_when_hidden_by_a_popup_or_disabled_motion() {
     let (mut composer, _rx) = super::super::tests::new_test_composer();
     composer.set_noir_animations_enabled(/*enabled*/ true);
-    composer.noir_dragon = NoirDragon::from_preferences(
+    composer.noir_scene = NoirScene::from_preferences(
         /*scene*/ None, /*legacy*/ None, /*style*/ None,
     );
     let render = |composer: &ChatComposer| {
         let area = Rect::new(
             /*x*/ 0, /*y*/ 0, /*width*/ 112, /*height*/ 20,
         );
-        DragonComposer {
+        SceneComposer {
             composer,
             inner: RenderableItem::Borrowed(&Draft),
             appearance: Some(appearance()),
@@ -251,12 +325,12 @@ fn noir_scene_resets_playback_when_hidden_by_a_popup_or_disabled_motion() {
     };
     composer.set_task_running(/*running*/ true);
     render(&composer);
-    assert!(composer.noir_dragon.started_at.get().is_some());
+    assert!(composer.noir_scene.started_at.get().is_some());
 
     composer.set_text_content("/".to_string(), Vec::new(), Vec::new());
     composer.set_task_running(/*running*/ false);
     render(&composer);
-    assert_eq!(composer.noir_dragon.started_at.get(), None);
+    assert_eq!(composer.noir_scene.started_at.get(), None);
 
     composer.set_text_content(String::new(), Vec::new(), Vec::new());
     composer.set_task_running(/*running*/ true);
@@ -264,7 +338,7 @@ fn noir_scene_resets_playback_when_hidden_by_a_popup_or_disabled_motion() {
     render(&composer);
     assert!(
         composer
-            .noir_dragon
+            .noir_scene
             .started_at
             .get()
             .is_some_and(|start| start >= resumed)
@@ -272,7 +346,7 @@ fn noir_scene_resets_playback_when_hidden_by_a_popup_or_disabled_motion() {
 
     composer.set_noir_animations_enabled(/*enabled*/ false);
     render(&composer);
-    assert_eq!(composer.noir_dragon.started_at.get(), None);
+    assert_eq!(composer.noir_scene.started_at.get(), None);
 }
 
 #[test]
@@ -286,6 +360,9 @@ fn noir_scene_paints_only_blank_cells_inside_clipped_offset_regions() {
         (Scene::Moire, Style::Halftone),
         (Scene::Transit, Style::Ascii),
         (Scene::Moire, Style::Ascii),
+        (Scene::Coast, Style::Dither),
+        (Scene::Dither, Style::Dither),
+        (Scene::Dither, Style::Halftone),
     ] {
         let mut buf = Buffer::empty(Rect::new(
             /*x*/ 3, /*y*/ 5, /*width*/ 70, /*height*/ 6,
@@ -309,8 +386,11 @@ fn noir_scene_paints_only_blank_cells_inside_clipped_offset_regions() {
             untouched(x, 7);
         }
         untouched(5, 5);
-        untouched(3, 5);
-        untouched(4, 10);
+        // The right-aligned panel leaves the band's corners alone; a full-bleed study fills them.
+        if !scene.full_bleed() {
+            untouched(3, 5);
+            untouched(4, 10);
+        }
         assert!(
             buf.content
                 .iter()
@@ -339,8 +419,14 @@ fn noir_scene_moves_while_working_and_holds_still_when_idle() {
     let area = Rect::new(
         /*x*/ 0, /*y*/ 0, /*width*/ 112, /*height*/ 10,
     );
-    for scene in [Scene::Coast, Scene::Flight, Scene::Transit, Scene::Moire] {
-        for style in [Style::Halftone, Style::Ascii] {
+    for scene in [
+        Scene::Coast,
+        Scene::Flight,
+        Scene::Transit,
+        Scene::Moire,
+        Scene::Dither,
+    ] {
+        for style in [Style::Halftone, Style::Ascii, Style::Dither] {
             let frames = [0, 400, 800].map(|millis| {
                 let mut buf = Buffer::empty(area);
                 paint(
@@ -483,6 +569,278 @@ fn noir_scene_gallery_shows_both_photographic_studies() {
         gallery.extend(rows(&buf));
     }
     insta::assert_snapshot!("noir_scene_gallery", gallery.join("\n"));
+}
+
+#[test]
+fn noir_dither_band_keeps_the_wallpaper_and_carries_no_caption() {
+    let area = Rect::new(
+        /*x*/ 0, /*y*/ 0, /*width*/ 112, /*height*/ 10,
+    );
+    let is_braille = |symbol: &str| {
+        symbol
+            .chars()
+            .all(|glyph| ('\u{2800}'..='\u{28ff}').contains(&glyph))
+    };
+    // The dark terminal is the primary case; the light one must still quantize and stay open.
+    for (look, quantized) in [(appearance(), false), (light_appearance(), true)] {
+        let mut buf = Buffer::empty(area);
+        paint(
+            Scene::Dither,
+            Style::Dither,
+            Motion::Working(Duration::from_millis(3200)),
+            area,
+            &mut buf,
+            look,
+        );
+        let mut dots = 0usize;
+        let mut braille_cells = 0usize;
+        for y in 0..10 {
+            for x in 0..112 {
+                let cell = &buf[(x, y)];
+                let symbol = cell.symbol();
+                assert_eq!(symbol.width(), 1, "{x},{y} {symbol:?}");
+                assert_eq!(
+                    cell.bg,
+                    Color::Reset,
+                    "{x},{y} must let the wallpaper through"
+                );
+                assert!(
+                    symbol == " " || is_braille(symbol),
+                    "{x},{y} {symbol:?} is not Braille"
+                );
+                if symbol != " " {
+                    braille_cells += 1;
+                    dots +=
+                        (symbol.chars().next().unwrap_or(' ') as u32 & 0xff).count_ones() as usize;
+                    assert_eq!(
+                        matches!(cell.fg, Color::Indexed(_)),
+                        quantized,
+                        "{x},{y} foreground quantization"
+                    );
+                }
+            }
+        }
+        // No caption anywhere in the band: every non-blank cell is picture.
+        assert!(
+            buf.content
+                .iter()
+                .all(|cell| cell.symbol() == " " || is_braille(cell.symbol())),
+            "the band must carry no text"
+        );
+        // A background reads as texture, not as a wall: well under half of all dots are lit, and
+        // on the dark terminal between a fifth and nine tenths of the cells carry any dot at all.
+        // The light terminal prints the shore's darkness, so almost every cell holds a sparse dot.
+        let cells = 112 * 10;
+        assert!(
+            (cells / 20..cells * 4).contains(&dots),
+            "{dots} dots in {cells} cells, quantized {quantized}"
+        );
+        assert!(
+            quantized || (cells / 5..cells * 9 / 10).contains(&braille_cells),
+            "{braille_cells} of {cells} cells"
+        );
+    }
+
+    // An explicit dither style keeps photographs in their right-aligned panel.
+    let mut coast = Buffer::empty(area);
+    paint(
+        Scene::Coast,
+        Style::Dither,
+        Motion::Idle,
+        area,
+        &mut coast,
+        appearance(),
+    );
+    for y in 2..10 {
+        for x in 0..58 {
+            assert_eq!(coast[(x, y)].symbol(), " ", "{x},{y}");
+        }
+    }
+    assert!(
+        (58..110).any(|x| is_braille(coast[(x, 5)].symbol())),
+        "the coast must print through the dither"
+    );
+}
+
+#[test]
+fn noir_dither_gallery_shows_the_lit_coast_band_and_dithered_studies() {
+    let mut gallery = Vec::new();
+    for (scene, width, height, motion, look) in [
+        (
+            Scene::Dither,
+            112,
+            10,
+            Motion::Working(Duration::ZERO),
+            appearance(),
+        ),
+        (
+            Scene::Dither,
+            112,
+            10,
+            Motion::Working(Duration::from_millis(3200)),
+            appearance(),
+        ),
+        (
+            Scene::Dither,
+            112,
+            10,
+            Motion::Working(Duration::from_millis(9000)),
+            appearance(),
+        ),
+        (Scene::Dither, 80, 8, Motion::Idle, appearance()),
+        (
+            Scene::Dither,
+            80,
+            8,
+            Motion::Working(Duration::from_millis(1200)),
+            light_appearance(),
+        ),
+        (
+            Scene::Dither,
+            44,
+            6,
+            Motion::Working(Duration::ZERO),
+            appearance(),
+        ),
+        (
+            Scene::Coast,
+            112,
+            10,
+            Motion::Working(Duration::ZERO),
+            appearance(),
+        ),
+        (
+            Scene::Flight,
+            112,
+            10,
+            Motion::Working(Duration::from_millis(1500)),
+            appearance(),
+        ),
+        (
+            Scene::Moire,
+            80,
+            8,
+            Motion::Working(Duration::from_millis(2200)),
+            appearance(),
+        ),
+    ] {
+        let area = Rect::new(/*x*/ 0, /*y*/ 0, width, height);
+        let mut buf = Buffer::empty(area);
+        paint(scene, Style::Dither, motion, area, &mut buf, look);
+        assert!(
+            buf.content.iter().any(|cell| cell.symbol() != " "),
+            "{scene:?} must be visible at {width}x{height}"
+        );
+        gallery.push(format!("{scene:?} {width}x{height} {motion:?}"));
+        gallery.extend(rows(&buf));
+    }
+    insta::assert_snapshot!("noir_dither_gallery", gallery.join("\n"));
+}
+
+#[test]
+fn noir_drives_change_the_working_picture_but_never_the_idle_one() {
+    let area = Rect::new(
+        /*x*/ 0, /*y*/ 0, /*width*/ 112, /*height*/ 10,
+    );
+    let render = |drive: Drive, motion: Motion, look: Appearance| {
+        let mut buf = Buffer::empty(area);
+        super::paint(
+            Scene::Dither,
+            Style::Dither,
+            motion,
+            drive,
+            area,
+            &mut buf,
+            look,
+        );
+        buf
+    };
+    let working = Motion::Working(Duration::from_millis(3200));
+    let cruise = render(Drive::Cruise, working, appearance());
+    let overdrive = render(Drive::Overdrive, working, appearance());
+    let warp = render(Drive::Warp, working, appearance());
+    assert_ne!(
+        cruise, overdrive,
+        "overdrive must recolor and streak the picture"
+    );
+    assert_ne!(overdrive, warp, "warp must replace the picture");
+    for (drive, buf) in [
+        (Drive::Cruise, &cruise),
+        (Drive::Overdrive, &overdrive),
+        (Drive::Warp, &warp),
+    ] {
+        for cell in &buf.content {
+            assert_eq!(cell.bg, Color::Reset, "{drive:?} keeps the wallpaper");
+            assert!(
+                cell.symbol() == " "
+                    || cell
+                        .symbol()
+                        .chars()
+                        .all(|glyph| ('\u{2800}'..='\u{28ff}').contains(&glyph)),
+                "{drive:?} {:?} is not Braille",
+                cell.symbol()
+            );
+        }
+    }
+    // The warp jump keeps a fading picture under the stars; after it only stars remain.
+    let jump = render(
+        Drive::Warp,
+        Motion::Working(Duration::from_millis(800)),
+        appearance(),
+    );
+    assert_ne!(jump, warp);
+    for drive in [Drive::Overdrive, Drive::Warp] {
+        assert_eq!(
+            render(drive, Motion::Idle, appearance()),
+            render(Drive::Cruise, Motion::Idle, appearance()),
+            "{drive:?} must not change the idle frame"
+        );
+        assert_ne!(
+            render(drive, working, appearance()),
+            render(
+                drive,
+                Motion::Working(Duration::from_millis(3300)),
+                appearance()
+            ),
+            "{drive:?} must keep moving"
+        );
+        let light = render(drive, working, light_appearance());
+        assert!(
+            light.content.iter().any(|cell| cell.symbol() != " "),
+            "{drive:?} shows on light backgrounds"
+        );
+    }
+}
+
+#[test]
+fn noir_drive_gallery_shows_overdrive_and_warp() {
+    let mut gallery = Vec::new();
+    for (scene, drive, width, height, millis) in [
+        (Scene::Dither, Drive::Overdrive, 112, 10, 3200),
+        (Scene::Dither, Drive::Warp, 112, 10, 900),
+        (Scene::Dither, Drive::Warp, 112, 10, 6000),
+        (Scene::Dither, Drive::Warp, 80, 8, 12000),
+        (Scene::Coast, Drive::Overdrive, 112, 10, 2000),
+    ] {
+        let area = Rect::new(/*x*/ 0, /*y*/ 0, width, height);
+        let mut buf = Buffer::empty(area);
+        super::paint(
+            scene,
+            Style::Dither,
+            Motion::Working(Duration::from_millis(millis)),
+            drive,
+            area,
+            &mut buf,
+            appearance(),
+        );
+        assert!(
+            buf.content.iter().any(|cell| cell.symbol() != " "),
+            "{scene:?} {drive:?} must be visible at {width}x{height}"
+        );
+        gallery.push(format!("{scene:?} {drive:?} {width}x{height} {millis}ms"));
+        gallery.extend(rows(&buf));
+    }
+    insta::assert_snapshot!("noir_drive_gallery", gallery.join("\n"));
 }
 
 #[test]

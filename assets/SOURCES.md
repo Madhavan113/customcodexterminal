@@ -9,7 +9,17 @@ All imagery is bundled locally. The terminal makes no image or video network req
 - Source image: https://images.unsplash.com/photo-1668336874273-39a68485d393
 - Usage: [Unsplash License](https://unsplash.com/license), verified on September 6, 2026.
 - Treatment: a 1600×2399 source cropped to `(0, 1104, 1600, 2004)`, then sampled to 160×90 luminance. Runtime halftone coloring and slight drift interpret the user's lavender/yellow coastal reference.
-- The native Terminal wallpaper also uses this photograph, combined with a faint mathematical dot/checker field. Rebuild it with `python3 scripts/prepare-background.py`. Its grain is deterministic and stationary.
+- The native Terminal wallpaper previously used this photograph; it now uses the Cosmos fog image below. `python3 scripts/prepare-background.py --photo assets/coast.jpg` rebuilds the coast version.
+- The Dither scene reuses the same luminance file across the whole band, ordered-dithered and lit by a deterministic drifting glow computed at runtime.
+
+## Wallpaper (Cosmos light arcs)
+
+- Found on Cosmos: [element 271964350](https://www.cosmos.so/e/271964350), a 12-frame video loop uploaded by @cosmos on Apr 19, 2023; no original author is credited on the page.
+- File: the user's download `cosmos_271964350.gif` (960×720, 12 frames). Frame 0 is stored as `assets/wallpaper-source.jpg`.
+- Subject: glowing white light arcs sweeping across a blue sky. Chosen by the user on September 7, 2026.
+- Usage: personal, non-distributed terminal wallpaper; the original license could not be verified through Cosmos.
+- Treatment: Terminal.app shows the first frame, fitted to 3840×2160 by `scripts/prepare-background.py` with colors left as shot. WezTerm and Cursor play the full loop from `assets/wallpaper-source.gif`.
+- Previous choice: the violet fog photograph, Cosmos [element 543803914](https://www.cosmos.so/e/543803914), credited to Arlo Cummings.
 
 ## Design references
 

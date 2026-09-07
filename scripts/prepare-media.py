@@ -2,17 +2,16 @@
 """Convert a photograph or short local video into bundled ASCII source frames."""
 
 import argparse
-from collections import Counter
 import io
 import json
 import math
-from pathlib import Path
 import re
 import struct
 import subprocess
+from collections import Counter
+from pathlib import Path
 
 from PIL import Image, ImageOps
-
 
 ROOT = Path(__file__).resolve().parent.parent
 

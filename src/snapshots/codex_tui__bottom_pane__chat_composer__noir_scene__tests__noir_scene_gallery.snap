@@ -1,5 +1,5 @@
 ---
-source: tui/src/bottom_pane/chat_composer/noir_dragon_tests.rs
+source: tui/src/bottom_pane/chat_composer/noir_scene_tests.rs
 expression: "gallery.join(\"\\n\")"
 ---
 Flight 112x10 Working(0ns)

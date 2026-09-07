@@ -3,13 +3,13 @@
 
 import argparse
 import base64
-from datetime import datetime, timezone
 import json
 import os
-from pathlib import Path
 import plistlib
 import shutil
 import subprocess
+from datetime import UTC, datetime
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SHELL_LINE = (
@@ -26,6 +26,8 @@ def background_bookmark(path):
         var error = Ref();
         var bookmark = url.bookmarkDataWithOptionsIncludingResourceValuesForKeysRelativeToURLError(0, $(), $(), error);
         if (!bookmark) throw new Error('Could not create the background image bookmark');
+        // Terminal expects the bookmark wrapped in a keyed archive; raw bookmark bytes make it
+        // silently refuse to import the profile.
         var archive = $.NSKeyedArchiver.archivedDataWithRootObject(bookmark);
         return ObjC.unwrap(archive.base64EncodedStringWithOptions(0));
     }"""
@@ -40,9 +42,7 @@ def background_bookmark(path):
 
 
 def activate_profile(profile):
-    previous_name = datetime.now(timezone.utc).strftime(
-        "Noir Velocity backup %Y%m%dT%H%M%S%fZ"
-    )
+    previous_name = datetime.now(UTC).strftime("Noir Velocity backup %Y%m%dT%H%M%S%fZ")
     # Terminal imports an existing name as a second profile. Rename our prior
     # profile first so the newly imported file becomes the selected version.
     preserve = """on run argv
@@ -128,7 +128,7 @@ def main():
     backup = (
         user_dir
         / ".config/terminal/backups"
-        / datetime.now(timezone.utc).strftime("noir-velocity-%Y%m%dT%H%M%S%fZ")
+        / datetime.now(UTC).strftime("noir-velocity-%Y%m%dT%H%M%S%fZ")
     )
     backup.mkdir(parents=True)
     saved = {}

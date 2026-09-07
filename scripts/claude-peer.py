@@ -4,11 +4,11 @@
 import argparse
 import fcntl
 import json
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import uuid
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 STATE = ROOT / ".agents-local"
@@ -73,7 +73,7 @@ def main():
             + prompt
         )
         result = subprocess.run(
-            command, input=prompt, text=True, capture_output=True, cwd=ROOT
+            command, input=prompt, text=True, capture_output=True, cwd=ROOT, check=False
         )
         if result.stderr:
             print(result.stderr, file=sys.stderr, end="")

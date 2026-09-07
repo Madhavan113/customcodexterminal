@@ -1,55 +1,183 @@
 # Codex Noir
 
-A terminal-only setup with photographic glyph art, quiet motion, a violet palette, and a clean zsh prompt. Run it inside macOS Terminal. The custom rendering lives in the real Codex Rust TUI.
+A terminal-only setup with an agent workspace, photographic glyph art, quiet motion, a violet palette, and a clean zsh prompt. Run `noir` to coordinate agents, or `codex-noir` for the custom rendering in the real Codex Rust TUI.
 
 The visual references are [Madhavan's website](https://madhavanprasanna.com/), the supplied lavender/yellow halftones, and [Cosmos](https://www.cosmos.so/e/885336733). Coast uses a real rocky-coast photograph; Flight samples the website's birds-in-flight footage; Transit uses a long-exposure subway photograph. Moire is a moving mathematical checker/dot field. [Source credits](assets/SOURCES.md).
 
-## Use
+## Agent workspace: `noir`
+
+`noir` puts Codex and Claude tasks, their exposed subagents, file changes, and controls in one terminal workspace. Select an agent to read its conversation or command activity, review its diffs, send instructions, or interrupt an active turn. Questions, permission requests, failures, and completed turns collect in the attention inbox.
+
+```sh
+python3 scripts/install-workspace.py --apply
+cd /path/to/project
+noir
+```
+
+The installer requires Python 3.12+ and creates a private environment with pinned Textual and Claude Agent SDK dependencies under `~/.local/share/noir/releases/`. It installs `~/.local/bin/noir`; omitting `--apply` previews the paths. Existing launchers receive timestamped backups, and previous releases stay available for rollback. Install and sign in with `codex` or `claude` first; `noir doctor` checks availability without starting an agent.
+
+| Key | Action |
+| --- | --- |
+| Ctrl+N | Start a Codex or Claude task |
+| Ctrl+S | Send the current draft; start a task from the new-agent dialog |
+| F8 | Interrupt the selected active run |
+| Ctrl+G | Open live file changes |
+| F6, then Enter | Open an attention item |
+| F2 | Toggle the agent list |
+| Ctrl+L | Focus the message draft |
+| Ctrl+P | Open the command palette |
+| Ctrl+Q | Detach and return to the shell; agents keep running |
+
+Use arrows to select an agent and Enter to focus its message. Tab moves between controls; logs and diffs scroll independently. Each agent keeps its draft and cursor while you switch agents, inspect changes, answer popups, or resize. Unsent drafts belong to the current UI and are not persisted after detaching. Short terminals use a compact layout; Ctrl+G gives changes more room in narrow terminals, and F2 restores the agent list.
+
+The Changes tab has two views:
+
+- **Since agent started** compares the working files against a private baseline captured before that task begins. Existing uncommitted work is the starting point, and later changes remain visible even after commits. In a shared folder this includes every writer; Git cannot identify which agent or person made each edit.
+- **Git changes** shows the branch, staged/unstaged status columns, untracked files, and separate staged and unstaged diffs. Inspection leaves the index and working files intact.
+
+Check **Separate Git worktree** when starting a task to isolate its files on a new `noir/...` branch. A worktree starts at the current HEAD, so it does not include existing uncommitted edits. It remains on disk until you merge or remove it using ordinary Git tools. Child agents use their parent's task baseline. Text previews are bounded to 1 MiB per file, 32 MiB per baseline, and 30,000 files; binary and larger files show change metadata.
+
+Noir controls sessions started through `noir`, including children the provider exposes. Independently running `codex-noir`, `claude-noir`, or other terminal sessions are not automatically enrolled. Codex uses its native App Server protocol, preferring the installed `codex-noir` executable; Claude uses its official SDK with the installed `claude` executable. They use existing sign-in, settings, and configured models unless you choose a model override. Pending permission requests require an explicit Allow once or Deny in the inbox. Requests already allowed by your provider settings follow those settings.
+
+Codex follow-ups steer an active turn; Claude follow-ups queue through its native client. Child messages route through the parent unless Codex explicitly exposes direct input. Codex child interruption requires an exposed active turn; Claude children are interrupted through their parent. The message target and available controls reflect these capabilities.
+
+The local session manager keeps running when the UI closes. Reopen `noir` in the same project to reconnect. Conversations, task baselines, and pending requests live in a private project directory beneath `~/.local/state/noir/` (`NOIR_STATE_DIR` or `--state-dir` overrides the base), with a private Unix socket and no network listener. After a manager restart, history remains; the next message resumes the saved native session, while stale approval requests expire. `noir shutdown` stops an idle manager; `noir shutdown --interrupt` also interrupts active sessions. Installing an update does not restart existing managers.
+
+The same controls are scriptable:
+
+```sh
+noir new codex 'Inspect the failing tests' --name Tests
+noir new claude 'Review the input layout' --name Layout --worktree
+noir list
+noir send AGENT_ID 'Focus on cursor preservation'
+noir changes AGENT_ID
+noir changes AGENT_ID --git --file src/example.rs
+noir interrupt AGENT_ID
+noir inbox
+noir respond REQUEST_ID --deny
+noir respond REQUEST_ID --answer QUESTION_ID='Use the compact layout'
+```
+
+`new` and `send` can read instructions from stdin. `list --json` and `inbox --json` expose structured state. Run with `--project /path/to/project` before the subcommand to control another project.
+
+## Codex TUI: `codex-noir`
 
 ```sh
 codex-noir
 codex-noir resume --last
+CODEX_NOIR_SCENE=coast codex-noir
 CODEX_NOIR_SCENE=moire codex-noir
 CODEX_NOIR_SCENE=flight codex-noir
 CODEX_NOIR_SCENE=transit codex-noir
+CODEX_NOIR_SCENE=dither codex-noir
 CODEX_NOIR_STYLE=ascii codex-noir
+CODEX_NOIR_STYLE=dither codex-noir
 CODEX_NOIR_SCENE=off codex-noir
 codex-noir -c tui.animations=false
 ```
 
-Coast and the `halftone` style are the defaults. The halftone uses Unicode Braille dots for finer photographic detail, with lavender ink and pale acid-yellow bands. `CODEX_NOIR_STYLE=ascii` selects the original character-density treatment. Unknown scene/style values fall back to Coast/halftone.
+Dither is the default scene. Coast and the other photographs default to the `halftone` style, which uses Unicode Braille dots for finer photographic detail, with lavender ink and pale acid-yellow bands. `CODEX_NOIR_STYLE=ascii` selects the original character-density treatment. `CODEX_NOIR_STYLE=dither` renders any scene through a screen-fixed 8×8 Bayer ordered dither as foreground dots only, so the Terminal wallpaper shows through. Unknown scene values fall back to Dither; unknown style values fall back to the scene's default.
+
+`CODEX_NOIR_SCENE=dither`, the default, is the background scene: the Coast photograph fills the whole band edge to edge with no caption, dithered by default, while three soft lights drift across it and the dithered shore surfaces and sinks under them.
+
+The reasoning effort drives the band. Normal effort cruises in lavender and acid yellow. **Max** shifts into overdrive: magenta-to-amber colors, a fast sweeping beam, motion-blur streaks, a faster gradient, 20 redraws a second. **Ultra** jumps to warp: over two and a half seconds the picture smears away and a star stream pours out of a vanishing point in cyan, white, and acid green at 30 redraws a second. Idle frames ignore the drive, so a resting terminal always looks the same. `CODEX_NOIR_DRIVE=cruise|overdrive|warp` pins a level for any tier.
 
 Images move while Codex is working and become still while idle. Coast and Transit drift gently through still photographs; Flight plays sampled footage; Moire moves its interference pattern. The scene yields to input, popups, and small terminal regions. `CODEX_NOIR_SCENE=off` hides only the scene; disabling `tui.animations` also removes the activity rail. The legacy `CODEX_NOIR_DRAGON=0` switch remains supported.
 
 The launcher forwards every ordinary Codex command and argument. It preserves your authentication, history, tools, permissions, model, and reasoning effort. It selects the local `noir-velocity` syntax theme when available and disables updater checks for this separately maintained build. Later `-c` arguments override launcher defaults. The stock `codex` command remains available.
 
-The shell prompt shows the working directory, Git branch, and a nonzero exit status. It uses no continuously running animation or background prompt process. The Terminal profile retains the existing SF Mono font and uses restrained colors for normal text, syntax, selection, and the cursor.
+The shell prompt shows the working directory, Git branch, and a nonzero exit status in color. It uses no continuously running animation or background prompt process. The Terminal profile retains the existing SF Mono font and uses restrained colors for normal text, syntax, selection, and the cursor.
 
-The Terminal window itself has a dark violet wallpaper: a photographed coast under a faint warped dot/checker field. It stays still behind ordinary shell commands as well as Codex. The image uses a small brightness range and fades through the center so text stays readable. macOS Terminal supplies the native image background; the moving artwork is rendered as text by the TUI. For a solid background, run `python3 scripts/install-terminal.py --background plain --apply --activate-profile`; use `--background moire` to restore the wallpaper.
+The Terminal window itself uses a photograph as its wallpaper: fog-bound tree silhouettes found on Cosmos, shown in their original color. It stays still behind ordinary shell commands as well as Codex. Swap the picture with `python3 scripts/prepare-background.py --photo /path/to/image.jpg` followed by `python3 scripts/install-terminal.py --apply`.
+
+## WezTerm: the animated wallpaper
+
+macOS Terminal cannot animate a background image, so the moving wallpaper lives in [WezTerm](https://wezterm.org/), which plays animated GIF, WebP, and PNG backgrounds natively. `terminal/wezterm.lua` carries the Noir Velocity palette, SF Mono, and the wallpaper; the rainbow prompt comes from your login shell as usual, and `codex-noir` and `claude-noir` run unchanged inside it.
+
+```sh
+brew install --cask wezterm
+python3 scripts/install-wezterm.py --apply
+python3 scripts/install-wezterm.py --apply --wallpaper /path/to/other.gif
+open -a WezTerm
+```
+
+The config is copied to `~/.config/wezterm/wezterm.lua` and the GIF to `~/.config/wezterm/noir-velocity.gif`. Edit the two variables at the top of the config to swap the file or change `dim`, the translucent wash that keeps text readable over the picture (0 shows it exactly as shot). Terminal.app keeps a still frame of the same GIF as its wallpaper.
+
+## Claude Code: `claude-noir`
+
+`claude-noir` gives Claude Code the same setup. Claude Code is closed source, so instead of patching it the launcher opens a dedicated tmux layout: a small top pane where Claude's mascot dances across the width (bouncing, hopping, flipping, leaving a lavender dither trail) and the main pane running the real `claude` with all your arguments, authentication, and settings. Closing Claude closes the layout.
+
+```sh
+brew install tmux
+python3 scripts/install-claude.py --apply
+claude-noir
+CLAUDE_NOIR_ROWS=9 claude-noir      # taller mascot pane
+CLAUDE_NOIR_DANCER=off claude-noir  # plain claude
+```
+
+The launcher uses its own tmux server socket and config (`terminal/claude-noir.tmux.conf`), so an existing tmux setup is untouched. Inside an existing tmux session, or without tmux, it runs plain `claude`. The animation is `scripts/claude-dancer.py`, installed to `~/.local/share/claude-noir/`.
+
+## Palette and Ghostty
+
+`terminal/palette.json` is the single source of the terminal colors: a vivid set (coral red, mint, gold, periwinkle, orchid, sky cyan) on the dark violet background. `python3 scripts/apply-palette.py` writes it into the macOS Terminal profile, `terminal/wezterm.lua`, `terminal/ghostty.conf`, and Cursor's integrated-terminal colors; re-run the installers afterwards. Every profile uses a blinking bar cursor.
+
+Ghostty gets the same profile through `terminal/ghostty.conf`, installed with `python3 scripts/install-ghostty.py --apply` to `~/.config/ghostty/config`. Stock Ghostty shows only PNG/JPEG backgrounds, so it displays the wallpaper's first frame.
+
+`patches/ghostty-animated-background.patch` teaches Ghostty 1.3.1 to play animated GIF backgrounds: it enables wuffs's GIF decoder, adds `pkg/wuffs/src/gif.zig` (all frames composited with disposal handling, unit-tested), and makes the renderer swap frames on the existing animation draw timer, so `background-image = something.gif` simply animates. The patch also stops the xcframework step from building iOS libraries for native-only builds. With only the Command Line Tools, the whole Zig side compiles and the renderer tests pass (`zig build test -Dxcframework-target=native -Demit-xcframework=false -Demit-macos-app=false -Dtest-filter=renderer`, with `metal`/`metallib` stubbed); packaging `Ghostty.app` still needs full Xcode for `xcodebuild` and the Metal shader compiler. `scripts/build-ghostty.sh` clones v1.3.1 into `build/ghostty`, applies the patch, fetches Zig 0.15.2, and builds the app once Xcode is selected.
+
+## Shell prompt
+
+The prompt prints the path in cyan, the Git branch in magenta, the `››` marker in yellow, and a nonzero exit status in red. `NO_COLOR` prints it plain. It runs no background process.
+
+## Cursor terminal wallpaper
+
+Cursor's built-in terminal has no wallpaper setting, so the same photograph is layered over its panel with the [vscode-background](https://github.com/shalldie/vscode-background) extension (`shalldie.background`), which patches Cursor's workbench files. Install it with `cursor --install-extension shalldie.background`, then add to Cursor's `settings.json`:
+
+```json
+"background.enabled": true,
+"background.editor": { "images": [], "useFront": false },
+"background.panel": {
+  "images": ["file:///Users/you/.config/terminal/backgrounds/noir-velocity.png"],
+  "opacity": 0.3,
+  "size": "cover"
+}
+```
+
+Restart Cursor; the extension patches itself in on first launch and asks for one more restart. `opacity` is the image layer's opacity over the panel (0.1–0.3 keeps text readable). Cursor will warn that its installation "appears corrupt" because a file changed; that is expected, and every Cursor update needs the extension to re-apply its patch.
 
 ## Source map
 
 | Path | What to change |
 | --- | --- |
-| `src/noir_dragon.rs` | Scene layout, lifecycle, and composer wrapper; private names retained for compatibility |
+| `bin/noir`, `scripts/noir-workspace.py`, `scripts/noir_workspace/` | Terminal workspace, durable sessions, native provider adapters, attention inbox, and Git inspection |
+| `scripts/install-workspace.py`, `scripts/requirements-workspace.txt` | Private workspace installation and pinned dependencies |
+| `scripts/test_noir_workspace.py`, `scripts/test_noir_ui.py`, `scripts/verify-workspace.py` | Workspace regression tests, terminal UI checks, and real CLI verification against local fixtures |
+| `src/noir_scene.rs` | Scene layout, lifecycle, and composer wrapper |
 | `src/noir_photo.rs` | Bounded frame parsing, timing, and luminance sampling |
-| `src/noir_halftone.rs` | Braille/ASCII painting, color adaptation, photographic crops, and the Moire field |
+| `src/noir_halftone.rs` | Braille/ASCII painting, color adaptation, photographic crops, the Moire field, and the drifting glow |
+| `src/noir_dither.rs` | Bayer ordered-dither painting used by the `dither` style and scene |
+| `src/noir_warp.rs` | The Ultra-effort star stream |
 | `src/noir_*tests.rs`, `src/snapshots/` | Renderer behavior and visual regression tests |
 | `src/noir_activity.rs` | The activity rail, using actual Codex effort settings |
 | `assets/` | Grayscale footage, photographs, metadata, and credits |
-| `terminal/noir.zsh` | Shell prompt |
+| `terminal/noir.zsh` | Colored shell prompt |
+| `terminal/palette.json`, `scripts/apply-palette.py` | Shared terminal colors for Terminal, WezTerm, Ghostty, and Cursor |
+| `terminal/ghostty.conf`, `scripts/install-ghostty.py` | Ghostty profile |
+| `bin/claude-noir`, `scripts/claude-dancer.py`, `terminal/claude-noir.tmux.conf`, `scripts/install-claude.py` | Claude Code layout with the dancing mascot |
 | `terminal/Noir Velocity.terminal` | macOS Terminal profile |
+| `terminal/wezterm.lua`, `scripts/install-wezterm.py` | WezTerm profile with the animated GIF wallpaper |
 | `terminal/backgrounds/noir-velocity.png` | Native wallpaper, regenerated by `scripts/prepare-background.py` |
 | `terminal/noir-velocity.tmTheme` | Code highlighting inside Codex |
 | `patches/codex-integration.patch` | Pinned upstream integration, release lockfile alignment, and existing terminal test fixture fixes |
 | `scripts/` | Source preparation, build, installation, media conversion, previews, and Claude handoffs |
+| `scripts/noir_project.py` | Shared pinned metadata and file checksums for build and packaging |
 | `upstream.json` | Exact upstream version and source checksum |
 
 This is a personal modification of OpenAI Codex **0.153.4**, using Rust **1.95.0**. The repository stores the custom modules directly; the build script reconstructs the full upstream tree and copies these modules into it. Image data is embedded at compile time, with no runtime image downloads or video decoder.
 
 ## Build and install
 
-Python 3.12+, the pinned Rust toolchain, and the upstream macOS build prerequisites are required. Use the [pinned upstream source](https://github.com/openai/codex/tree/rust-v0.153.4) for its full development prerequisites. The installer targets Apple Silicon and reuses companion executables from an existing, exact-version Codex package.
+Python 3.12+, Git, `just`, the pinned Rust toolchain, and the upstream macOS build prerequisites are required. Use the [pinned upstream source](https://github.com/openai/codex/tree/rust-v0.153.4) for its full development prerequisites. The installer targets Apple Silicon and reuses companion executables from an existing, exact-version Codex package.
 
 ```sh
 ./scripts/build.sh
@@ -66,21 +194,24 @@ Both installers preview by default when `--apply` is omitted. Existing custom pa
 
 The Terminal installer copies the wallpaper to `~/.config/terminal/backgrounds/` and creates its native file bookmark using macOS Foundation. The portable profile in this repository contains no machine-specific image bookmark; install it through the script to include the wallpaper.
 
-This machine also has a prepared source/toolchain cache. To reuse it after editing `src/`:
+To keep the source and Cargo caches elsewhere, substitute your cache directory below. Load any local toolchain environment before running these commands:
 
 ```sh
-. /private/tmp/codex-noir-build/env.sh
+noir_cache=/path/to/codex-noir-cache
+export CARGO_TARGET_DIR="$noir_cache/target"
 ./scripts/build.sh \
-  --checkout /private/tmp/codex-noir-build/codex-rust-v0.153.4 \
-  --archive /private/tmp/codex-noir-build/codex-rust-v0.153.4.tar.gz \
+  --checkout "$noir_cache/codex-rust-v0.153.4" \
+  --archive "$noir_cache/codex-rust-v0.153.4.tar.gz" \
   --adopt-existing
 python3 scripts/install.py --replace --apply \
-  --binary /private/tmp/codex-noir-build/target/dev-small/codex \
-  --source-root /private/tmp/codex-noir-build/codex-rust-v0.153.4 \
-  --source-archive /private/tmp/codex-noir-build/codex-rust-v0.153.4.tar.gz
+  --binary "$CARGO_TARGET_DIR/dev-small/codex" \
+  --source-root "$noir_cache/codex-rust-v0.153.4" \
+  --source-archive "$noir_cache/codex-rust-v0.153.4.tar.gz"
 ```
 
-Review and test source edits before reinstalling. The preparer checks the archive checksum and integration patch, and refuses to overwrite diverging edits made directly in an existing checkout. Copy intentional checkout edits back into `src/` first.
+Review and test source edits before reinstalling. The preparer checks the archive checksum and integration patch, and refuses to overwrite diverging edits made directly in an existing checkout. Copy intentional checkout edits back into `src/` or `assets/` first. It removes obsolete modules, snapshots, and assets only when they still match the previous sync, and leaves unchanged files untouched.
+
+When updating the integration patch, keep a copy of the patch that prepared your checkout. Pass `--previous-patch /path/to/previous-integration.patch` to `scripts/prepare-source.py` or `scripts/build.sh` to migrate that checkout. The preparer validates local edits before migration and restores the previous integration if the replacement patch cannot apply. Without the previous patch, choose a new `--checkout` directory; existing checkouts are never reset automatically.
 
 The installed package is `~/.local/share/codex-noir/0.153.4`; the launcher is `~/.local/bin/codex-noir`. Each package includes its editable source bundle and provenance hashes. To roll back, move aside the current package and launcher and restore their matching timestamped `.backup-*` siblings. Shell/profile backup mappings are under `~/.config/terminal/backups/noir-velocity-*/files.json`.
 
@@ -110,9 +241,32 @@ python3 -m venv .venv
   --source-credit 'Photographer / source'
 ```
 
-For a clip, use `--name flight --title Flight --video --start 0 --duration 4 --fps 12`. The converter generates a JPEG preview, metadata, and a bounded `.nrf` grayscale sequence. It uses one contrast curve across a clip and blends the loop transition. Rebuild after changing assets. The bundled photo selectors are `coast`, `flight`, and `transit`; additional names need a renderer entry. `moire` needs no source image.
+For a clip, use `--name flight --title Flight --video --start 0 --duration 4 --fps 12`. The converter generates a JPEG preview, metadata, and a bounded `.nrf` grayscale sequence. It uses one contrast curve across a clip and blends the loop transition. Rebuild after changing assets. The bundled photo selectors are `coast`, `flight`, and `transit`; additional names need a renderer entry. `moire` needs no source image, and `dither` reuses the Coast photograph.
 
 ## Verification and history
+
+Run the regression tests with `python3 -m unittest discover -s scripts -p 'test_*.py'`. Source preparation checks cover checksum validation, checkout creation and adoption, rename migration, local-edit protection, bounded cleanup, and integration rollback. Workspace checks cover dirty starting trees, staged/unstaged diffs, worktrees, protocol streaming and controls, permission expiry, session persistence, and drafts/cursors through UI updates. They use temporary fixtures; UI and Claude tests require the workspace dependencies and otherwise skip.
+
+For the complete workspace checks, including the installed Codex and Claude executables against inert local model responses:
+
+```sh
+python3 -m venv .venv
+.venv/bin/pip install -r scripts/requirements-workspace.txt
+.venv/bin/python -m unittest discover -s scripts -p 'test_*.py'
+.venv/bin/python scripts/verify-workspace.py
+./bin/noir doctor
+```
+
+The native verification isolates provider configuration, uses no real model API, and verifies streamed replies, interruption, and a declined Claude file write. Its report stays in ignored `output/workspace-verification/`. Run `./bin/noir` to develop directly from the checkout.
+
+For Python lint and formatting checks:
+
+```sh
+python3 -m venv .venv
+.venv/bin/pip install -r scripts/requirements-dev.txt
+.venv/bin/ruff check scripts
+.venv/bin/ruff format --check scripts
+```
 
 The preview harness runs the actual CLI in a pseudo-terminal against an inert local streaming fixture. It does not use your authentication or call a model API. Install `scripts/requirements-preview.txt`, then run:
 
@@ -123,10 +277,10 @@ python3 scripts/preview-terminal.py ~/.local/share/codex-noir/0.153.4/bin/codex 
 
 Use the packaged executable so its companion tools are present. Captures and machine-readable checks are written under ignored `output/terminal-preview/`. The preview renders captured ANSI cells with local fonts and composites the wallpaper underneath. Native profile and image-bookmark settings were verified separately; a native window screenshot was unavailable because macOS Screen Recording permission was not granted.
 
-All 17 Noir renderer tests pass, including layout/cursor preservation, clipping, scene/style selection, animation lifecycle, parser limits, single-cell Braille, light/256-color rendering, and the reviewed visual snapshots. The scoped Clippy fix, formatting, and final CLI build also completed successfully.
+The last recorded renderer validation passed all 17 Noir tests, including layout/cursor preservation, clipping, scene/style selection, animation lifecycle, parser limits, single-cell Braille, light/256-color rendering, and the reviewed visual snapshots. The scoped Clippy fix, formatting, and CLI build also completed successfully for that build.
 
-Eight actual CLI capture scenarios pass: Coast, Moire, and Flight at 112×30 in 256 colors; Coast with the ASCII style; Coast at 80×24 in truecolor; a 40×18 terminal that hides the image; and scene-off and motion-off settings. Each preserves the draft and stops decorative movement while idle. The captures use an isolated local fixture, with no model request or change to the user's settings. The earlier build's Max and Ultra rail checks also passed; their implementation is unchanged.
+That build passed eight actual CLI capture scenarios: Coast, Moire, and Flight at 112×30 in 256 colors; Coast with the ASCII style; Coast at 80×24 in truecolor; a 40×18 terminal that hides the image; and scene-off and motion-off settings. Each preserved the draft and stopped decorative movement while idle. The captures used an isolated local fixture, with no model request or change to the user's settings. Max and Ultra rail checks also passed.
 
-The complete TUI suite in a macOS Terminal environment passed 4,077 tests and skipped six. Its 31 remaining snapshot failures match the previous build exactly: 28 expect the development version `0.0.0` instead of the pinned release `0.153.4`, and three expect an Option–Up hint where upstream selects Shift–Left for Apple Terminal. The real-binary reconnect and immediate-input checks pass. These unrelated snapshots are left unchanged. An earlier run with the coding host's `NO_COLOR=1` also suppressed ANSI sequences expected by four cursor tests; those pass with colors enabled for the target terminal.
+The recorded full TUI baseline in a macOS Terminal environment was 4,077 passed, six skipped, and 31 snapshot failures: 28 expected the development version `0.0.0` instead of the pinned release `0.153.4`, and three expected an Option–Up hint where upstream selects Shift–Left for Apple Terminal. The real-binary reconnect and immediate-input checks passed. These unrelated snapshots are left unchanged. Run with `NO_COLOR` unset as shown above; it otherwise suppresses ANSI sequences expected by four cursor tests. Re-run the checks for new Rust changes instead of treating these historical results as current validation.
 
 The earlier desktop app prototype is preserved at the [`app-prototype`](https://github.com/Madhavan113/customcodexterminal/tree/app-prototype) tag. Main now develops the ordinary terminal setup.

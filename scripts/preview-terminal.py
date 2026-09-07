@@ -6,7 +6,6 @@ import fcntl
 import http.server
 import json
 import os
-from pathlib import Path
 import pty
 import select
 import shutil
@@ -15,6 +14,7 @@ import subprocess
 import termios
 import threading
 import time
+from pathlib import Path
 
 import pyte
 from PIL import Image, ImageDraw, ImageFont, ImageOps
@@ -23,8 +23,21 @@ ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "output/terminal-preview"
 PALETTE_CONFIG = json.loads((ROOT / "terminal/palette.json").read_text())
 COLUMNS, ROWS = 112, 30
-BG, FG = PALETTE_CONFIG["background"], PALETTE_CONFIG["foreground"]
-PALETTE = {key: value for key, value in PALETTE_CONFIG.items()}
+ANSI_NAMES = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"]
+# terminal/palette.json is shared with the terminal installers; flatten it into the bare hex
+# names the vt100 color mapping below expects.
+PALETTE = {
+    "background": PALETTE_CONFIG["background"].lstrip("#"),
+    "foreground": PALETTE_CONFIG["foreground"].lstrip("#"),
+    "accent": PALETTE_CONFIG["brights"][5].lstrip("#"),
+    "muted": PALETTE_CONFIG["brights"][0].lstrip("#"),
+    "selection": PALETTE_CONFIG["selection"].lstrip("#"),
+}
+for name, value in zip(ANSI_NAMES, PALETTE_CONFIG["ansi"]):
+    PALETTE[name] = value.lstrip("#")
+for name, value in zip(ANSI_NAMES, PALETTE_CONFIG["brights"]):
+    PALETTE["bright" + name] = value.lstrip("#")
+BG, FG = PALETTE["background"], PALETTE["foreground"]
 PALETTE["brown"] = PALETTE["yellow"]
 PALETTE["brightbrown"] = PALETTE["brightyellow"]
 BRAILLE_MASKS = {}
@@ -82,7 +95,7 @@ def render(screen, label):
                 (padding, 42),
             )
     draw = ImageDraw.Draw(image)
-    draw.text((padding, 12), label, font=font, fill="#" + PALETTE_CONFIG["accent"])
+    draw.text((padding, 12), label, font=font, fill="#" + PALETTE["accent"])
     for y in range(ROWS):
         for x in range(COLUMNS):
             cell = screen.buffer[y][x]

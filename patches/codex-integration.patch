@@ -1335,7 +1335,7 @@ index 953f2e9..c4dc1a8 100644
 +//! cyan while working, violet at Max, and a cyan/pink aurora at Ultra. It stops
 +//! while idle, gives popups and native tier celebrations priority, and never
 +//! paints draft or attachment cells. The normal animation setting disables it.
-+//! A separate dragon scene can sit above the composer when space permits;
++//! A separate photographic or Moiré scene can sit above the composer when space permits;
 +//! its wrapper reserves its own rows and delegates all input/cursor geometry.
  //!
  //! # Large Paste Placeholders
@@ -1345,7 +1345,7 @@ index 953f2e9..c4dc1a8 100644
  mod footer_state;
  mod history_search;
 +mod noir_activity;
-+mod noir_dragon;
++mod noir_scene;
  mod popup_state;
  mod reconnect;
  mod slash_input;
@@ -1354,7 +1354,7 @@ index 953f2e9..c4dc1a8 100644
  use self::footer_state::FooterState;
  use self::history_search::HistorySearchSession;
 +use self::noir_activity::NoirActivity;
-+use self::noir_dragon::NoirDragon;
++use self::noir_scene::NoirScene;
  use self::popup_state::ActivePopup;
  use self::popup_state::DismissedToken;
  use self::popup_state::PopupState;
@@ -1363,7 +1363,7 @@ index 953f2e9..c4dc1a8 100644
      effort_status_line_transition: Option<EffortStatusLineTransition>,
      effort_observed: bool,
 +    noir_activity: NoirActivity,
-+    noir_dragon: NoirDragon,
++    noir_scene: NoirScene,
      attachments: AttachmentState,
      placeholder_text: String,
      blocks_direct_input: bool,
@@ -1372,7 +1372,7 @@ index 953f2e9..c4dc1a8 100644
              effort_status_line_transition: None,
              effort_observed: false,
 +            noir_activity: NoirActivity::default(),
-+            noir_dragon: NoirDragon::default(),
++            noir_scene: NoirScene::default(),
              attachments: AttachmentState::default(),
              placeholder_text,
              blocks_direct_input: false,
@@ -1417,7 +1417,7 @@ index f4caf92..407a96d 100644
                  }))
              };
 -            flex2.push(/*flex*/ 0, composer);
-+            flex2.push(/*flex*/ 0, self.composer.with_noir_dragon(composer));
++            flex2.push(/*flex*/ 0, self.composer.with_noir_scene(composer));
              RenderableItem::Owned(Box::new(flex2))
          }
      }

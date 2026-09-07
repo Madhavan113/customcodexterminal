@@ -2,22 +2,20 @@
 """Stage and install the separately named Codex Noir package after validation."""
 
 import argparse
-import hashlib
 import json
 import os
-from pathlib import Path
 import shutil
 import struct
 import sys
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from pathlib import Path
 
+from noir_project import PIN, ROOT, sha256
 
-VERSION = "0.153.4"
-TARGET = "aarch64-apple-darwin"
-SOURCE_TAG = f"rust-v{VERSION}"
-STAGING = Path(__file__).resolve().parent.parent
-PIN = json.loads((STAGING / "upstream.json").read_text())
+VERSION = PIN["version"]
+TARGET = PIN["target"]
+SOURCE_TAG = PIN["tag"]
 PACKAGE = Path.home() / ".local/share/codex-noir" / VERSION
 LAUNCHER = Path.home() / ".local/bin/codex-noir"
 STOCK = Path.home() / ".codex/packages/standalone/releases" / f"{VERSION}-{TARGET}"
@@ -26,14 +24,6 @@ COMPANIONS = (
     Path("codex-resources/zsh/bin/zsh"),
     Path("codex-path/rg"),
 )
-
-
-def sha256(path):
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def exists(path):
@@ -46,14 +36,14 @@ def validate(args):
         args.binary,
         args.patch,
         args.source_archive,
-        STAGING / "bin/codex-noir",
-        STAGING / "README.md",
-        STAGING / "src/noir_dragon.rs",
-        STAGING / "src/noir_halftone.rs",
-        STAGING / "assets/coast.nrf",
-        STAGING / "assets/flight.nrf",
-        STAGING / "assets/transit.nrf",
-        STAGING / "terminal/backgrounds/noir-velocity.png",
+        ROOT / "bin/codex-noir",
+        ROOT / "README.md",
+        ROOT / "src/noir_scene.rs",
+        ROOT / "src/noir_halftone.rs",
+        ROOT / "assets/coast.nrf",
+        ROOT / "assets/flight.nrf",
+        ROOT / "assets/transit.nrf",
+        ROOT / "terminal/backgrounds/noir-velocity.png",
         STOCK / "codex-package.json",
         *(STOCK / relative for relative in COMPANIONS),
     ]
@@ -124,13 +114,13 @@ def build_package(stage, args):
     (destination / "codex-package.json").write_text(
         json.dumps(manifest, indent=2) + "\n"
     )
-    shutil.copy2(STAGING / "README.md", destination / "README.md")
-    shutil.copy2(STAGING / "bin/codex-noir", destination / "launcher.sh")
+    shutil.copy2(ROOT / "README.md", destination / "README.md")
+    shutil.copy2(ROOT / "bin/codex-noir", destination / "launcher.sh")
     (destination / "launcher.sh").chmod(0o755)
     # Keep the integration patch AND editable modules/assets together: the
     # small patch alone is not a reconstruction of the photographic renderer.
     source_files = [
-        STAGING / name
+        ROOT / name
         for name in (
             ".gitignore",
             ".gitattributes",
@@ -140,6 +130,7 @@ def build_package(stage, args):
             "LICENSE",
             "NOTICE",
             "upstream.json",
+            "ruff.toml",
             "bin/codex-noir",
         )
     ]
@@ -162,13 +153,13 @@ def build_package(stage, args):
     for folder in ("src", "assets", "patches", "terminal", "scripts"):
         source_files.extend(
             path
-            for path in (STAGING / folder).rglob("*")
+            for path in (ROOT / folder).rglob("*")
             if path.is_file()
             and path.suffix in extensions
             and "__pycache__" not in path.parts
         )
     for source in source_files:
-        target = destination / "source" / source.relative_to(STAGING)
+        target = destination / "source" / source.relative_to(ROOT)
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
     provenance = {
@@ -176,10 +167,10 @@ def build_package(stage, args):
         "official_release_binary": False,
         "upstream_version": VERSION,
         "upstream_tag": SOURCE_TAG,
-        "upstream_source_url": f"https://github.com/openai/codex/archive/refs/tags/{SOURCE_TAG}.tar.gz",
+        "upstream_source_url": PIN["archive_url"],
         "source_checkout": str(args.source_root.resolve()),
         "source_archive_sha256": sha256(args.source_archive),
-        "patch_file": "source/patches/codex-integration.patch",
+        "patch_file": f"source/{PIN['integration_patch']}",
         "patch_sha256": sha256(args.patch),
         "built_binary_source": str(args.binary.resolve()),
         "binary_sha256": sha256(destination / "bin/codex"),
@@ -190,9 +181,9 @@ def build_package(stage, args):
         "launcher_sha256": sha256(destination / "launcher.sh"),
         "customization_repository": "https://github.com/Madhavan113/customcodexterminal",
         "source_files_sha256": {
-            str(path.relative_to(STAGING)): sha256(path) for path in source_files
+            str(path.relative_to(ROOT)): sha256(path) for path in source_files
         },
-        "installed_at_utc": datetime.now(timezone.utc).isoformat(),
+        "installed_at_utc": datetime.now(UTC).isoformat(),
     }
     (destination / "provenance.json").write_text(
         json.dumps(provenance, indent=2) + "\n"
@@ -216,9 +207,9 @@ def install(args):
         os.close(descriptor)
         launcher_stage = Path(launcher_name)
         try:
-            shutil.copy2(STAGING / "bin/codex-noir", launcher_stage)
+            shutil.copy2(ROOT / "bin/codex-noir", launcher_stage)
             launcher_stage.chmod(0o755)
-            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+            stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
             for destination in (PACKAGE, LAUNCHER):
                 if exists(destination):
                     if not args.replace:
@@ -262,18 +253,16 @@ def main():
     parser.add_argument(
         "--binary",
         type=Path,
-        default=STAGING / f"build/codex-{SOURCE_TAG}/codex-rs/target/dev-small/codex",
+        default=ROOT / f"build/codex-{SOURCE_TAG}/codex-rs/target/dev-small/codex",
     )
+    parser.add_argument("--patch", type=Path, default=ROOT / PIN["integration_patch"])
     parser.add_argument(
-        "--patch", type=Path, default=STAGING / "patches/codex-integration.patch"
-    )
-    parser.add_argument(
-        "--source-root", type=Path, default=STAGING / f"build/codex-{SOURCE_TAG}"
+        "--source-root", type=Path, default=ROOT / f"build/codex-{SOURCE_TAG}"
     )
     parser.add_argument(
         "--source-archive",
         type=Path,
-        default=STAGING / f"downloads/codex-{SOURCE_TAG}.tar.gz",
+        default=ROOT / f"downloads/codex-{SOURCE_TAG}.tar.gz",
     )
     parser.add_argument(
         "--apply",

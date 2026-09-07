@@ -1,0 +1,520 @@
+diff --git a/pkg/wuffs/src/c.zig b/pkg/wuffs/src/c.zig
+index d94247d..1f82463 100644
+--- a/pkg/wuffs/src/c.zig
++++ b/pkg/wuffs/src/c.zig
+@@ -12,7 +12,9 @@ pub const defines: []const []const u8 = &[_][]const u8{
+     "WUFFS_CONFIG__MODULE__ADLER32",
+     "WUFFS_CONFIG__MODULE__CRC32",
+     "WUFFS_CONFIG__MODULE__DEFLATE",
++    "WUFFS_CONFIG__MODULE__GIF",
+     "WUFFS_CONFIG__MODULE__JPEG",
++    "WUFFS_CONFIG__MODULE__LZW",
+     "WUFFS_CONFIG__MODULE__PNG",
+     "WUFFS_CONFIG__MODULE__ZLIB",
+ };
+diff --git a/pkg/wuffs/src/gif.zig b/pkg/wuffs/src/gif.zig
+new file mode 100644
+index 0000000..1994592
+--- /dev/null
++++ b/pkg/wuffs/src/gif.zig
+@@ -0,0 +1,268 @@
++const std = @import("std");
++const Allocator = std.mem.Allocator;
++const c = @import("c.zig").c;
++const Error = @import("error.zig").Error;
++const check = @import("error.zig").check;
++const ImageData = @import("main.zig").ImageData;
++const maximum_image_size = @import("main.zig").maximum_image_size;
++const mul = std.math.mul;
++
++const log = std.log.scoped(.wuffs_gif);
++
++/// Wuffs measures frame durations in flicks: 1/705,600,000 of a second.
++const flicks_per_second: u64 = 705_600_000;
++
++/// Frames shorter than this are treated like browsers treat them: a zero or
++/// near-zero GIF delay plays at ten frames per second.
++const minimum_duration_ns: u64 = 20 * std.time.ns_per_ms;
++const default_duration_ns: u64 = 100 * std.time.ns_per_ms;
++
++/// Upper bound on decoded frames so a hostile file cannot exhaust memory.
++const maximum_frames: usize = 1024;
++
++/// One fully composited RGBA frame of an animation.
++pub const Frame = struct {
++    /// RGBA non-premultiplied pixels, `width * height * 4` bytes.
++    data: []u8,
++    /// How long this frame stays on screen.
++    duration_ns: u64,
++};
++
++/// A decoded animation. Every frame is the complete canvas, with disposal
++/// already applied, so a renderer can upload frames independently.
++pub const AnimationData = struct {
++    width: u32,
++    height: u32,
++    frames: []Frame,
++
++    pub fn deinit(self: AnimationData, alloc: Allocator) void {
++        for (self.frames) |frame| alloc.free(frame.data);
++        alloc.free(self.frames);
++    }
++
++    /// Total duration of one loop.
++    pub fn loopDurationNs(self: AnimationData) u64 {
++        var total: u64 = 0;
++        for (self.frames) |frame| total += frame.duration_ns;
++        return total;
++    }
++};
++
++/// Decode only the first frame of a GIF as a still image.
++pub fn decode(alloc: Allocator, data: []const u8) Error!ImageData {
++    var animation = try decodeAnimation(alloc, data);
++    defer animation.deinit(alloc);
++    const first = animation.frames[0].data;
++    animation.frames[0].data = &.{};
++    return .{
++        .width = animation.width,
++        .height = animation.height,
++        .data = first,
++    };
++}
++
++/// Decode every frame of a GIF into composited RGBA canvases.
++pub fn decodeAnimation(alloc: Allocator, data: []const u8) Error!AnimationData {
++    // See png.zig for why the decoder is heap allocated through Zig.
++    const decoder_buf = try alloc.alloc(u8, c.sizeof__wuffs_gif__decoder());
++    defer alloc.free(decoder_buf);
++
++    const decoder: ?*c.wuffs_gif__decoder = @ptrCast(decoder_buf);
++    {
++        const status = c.wuffs_gif__decoder__initialize(
++            decoder,
++            c.sizeof__wuffs_gif__decoder(),
++            c.WUFFS_VERSION,
++            0,
++        );
++        try check(log, &status);
++    }
++
++    var source_buffer: c.wuffs_base__io_buffer = .{
++        .data = .{ .ptr = @ptrCast(@constCast(data.ptr)), .len = data.len },
++        .meta = .{
++            .wi = data.len,
++            .ri = 0,
++            .pos = 0,
++            .closed = true,
++        },
++    };
++
++    var image_config: c.wuffs_base__image_config = undefined;
++    {
++        const status = c.wuffs_gif__decoder__decode_image_config(
++            decoder,
++            &image_config,
++            &source_buffer,
++        );
++        try check(log, &status);
++    }
++
++    const width = c.wuffs_base__pixel_config__width(&image_config.pixcfg);
++    const height = c.wuffs_base__pixel_config__height(&image_config.pixcfg);
++
++    c.wuffs_base__pixel_config__set(
++        &image_config.pixcfg,
++        c.WUFFS_BASE__PIXEL_FORMAT__RGBA_NONPREMUL,
++        c.WUFFS_BASE__PIXEL_SUBSAMPLING__NONE,
++        width,
++        height,
++    );
++
++    const size: usize = try mul(
++        usize,
++        try mul(usize, width, height),
++        @sizeOf(c.wuffs_base__color_u32_argb_premul),
++    );
++    if (size > maximum_image_size) {
++        log.warn("image size {d} is larger than the maximum allowed ({d})", .{ size, maximum_image_size });
++        return error.Overflow;
++    }
++
++    // The canvas every frame is composited onto, plus a copy for frames that
++    // ask to restore the previous canvas when they are disposed.
++    const canvas = try alloc.alloc(u8, size);
++    defer alloc.free(canvas);
++    @memset(canvas, 0);
++    const previous = try alloc.alloc(u8, size);
++    defer alloc.free(previous);
++
++    const work_buffer = try alloc.alloc(
++        u8,
++        std.math.cast(
++            usize,
++            c.wuffs_gif__decoder__workbuf_len(decoder).max_incl,
++        ) orelse return error.OutOfMemory,
++    );
++    defer alloc.free(work_buffer);
++    const work_slice = c.wuffs_base__make_slice_u8(work_buffer.ptr, work_buffer.len);
++
++    var pixel_buffer: c.wuffs_base__pixel_buffer = undefined;
++    {
++        const status = c.wuffs_base__pixel_buffer__set_from_slice(
++            &pixel_buffer,
++            &image_config.pixcfg,
++            c.wuffs_base__make_slice_u8(canvas.ptr, canvas.len),
++        );
++        try check(log, &status);
++    }
++
++    var frames: std.ArrayList(Frame) = .empty;
++    errdefer {
++        for (frames.items) |frame| alloc.free(frame.data);
++        frames.deinit(alloc);
++    }
++
++    // Disposal of the frame just shown, applied before the next one is drawn.
++    var disposal: c.wuffs_base__animation_disposal = c.WUFFS_BASE__ANIMATION_DISPOSAL__NONE;
++    var disposal_bounds: c.wuffs_base__rect_ie_u32 = undefined;
++
++    while (frames.items.len < maximum_frames) {
++        var frame_config: c.wuffs_base__frame_config = undefined;
++        {
++            const status = c.wuffs_gif__decoder__decode_frame_config(
++                decoder,
++                &frame_config,
++                &source_buffer,
++            );
++            // wuffs reports the end of the frame list as a note whose message
++            // (without its "@" prefix) reads "base: end of data".
++            if (c.wuffs_base__status__is_note(&status)) {
++                const message = std.mem.span(c.wuffs_base__status__message(&status));
++                if (std.mem.eql(u8, message, "base: end of data")) break;
++            }
++            try check(log, &status);
++        }
++
++        switch (disposal) {
++            c.WUFFS_BASE__ANIMATION_DISPOSAL__RESTORE_BACKGROUND => clearRect(
++                canvas,
++                width,
++                disposal_bounds,
++            ),
++            c.WUFFS_BASE__ANIMATION_DISPOSAL__RESTORE_PREVIOUS => @memcpy(canvas, previous),
++            else => {},
++        }
++
++        disposal = c.wuffs_base__frame_config__disposal(&frame_config);
++        disposal_bounds = c.wuffs_base__frame_config__bounds(&frame_config);
++        if (disposal == c.WUFFS_BASE__ANIMATION_DISPOSAL__RESTORE_PREVIOUS) {
++            @memcpy(previous, canvas);
++        }
++
++        {
++            const status = c.wuffs_gif__decoder__decode_frame(
++                decoder,
++                &pixel_buffer,
++                &source_buffer,
++                c.WUFFS_BASE__PIXEL_BLEND__SRC_OVER,
++                work_slice,
++                null,
++            );
++            if (c.wuffs_base__status__is_note(&status)) {
++                const message = std.mem.span(c.wuffs_base__status__message(&status));
++                if (std.mem.eql(u8, message, "base: end of data")) break;
++            }
++            try check(log, &status);
++        }
++
++        const flicks = c.wuffs_base__frame_config__duration(&frame_config);
++        var duration_ns: u64 = @intCast(@divTrunc(
++            @as(u128, @intCast(@max(flicks, 0))) * std.time.ns_per_s,
++            flicks_per_second,
++        ));
++        if (duration_ns < minimum_duration_ns) duration_ns = default_duration_ns;
++
++        const copy = try alloc.dupe(u8, canvas);
++        errdefer alloc.free(copy);
++        try frames.append(alloc, .{ .data = copy, .duration_ns = duration_ns });
++    }
++
++    if (frames.items.len == 0) {
++        log.warn("gif contains no frames", .{});
++        return error.WuffsError;
++    }
++
++    return .{
++        .width = width,
++        .height = height,
++        .frames = try frames.toOwnedSlice(alloc),
++    };
++}
++
++fn clearRect(canvas: []u8, width: u32, bounds: c.wuffs_base__rect_ie_u32) void {
++    const x0: usize = bounds.min_incl_x;
++    const x1: usize = bounds.max_excl_x;
++    var y: usize = bounds.min_incl_y;
++    while (y < bounds.max_excl_y) : (y += 1) {
++        const start = (y * width + x0) * 4;
++        const end = (y * width + x1) * 4;
++        if (end <= canvas.len) @memset(canvas[start..end], 0);
++    }
++}
++
++test "gif_decode_000000" {
++    const data = try decode(std.testing.allocator, @embedFile("1x1#000000.gif"));
++    defer std.testing.allocator.free(data.data);
++
++    try std.testing.expectEqual(1, data.width);
++    try std.testing.expectEqual(1, data.height);
++    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 0, 255 }, data.data);
++}
++
++test "gif_decode_FFFFFF" {
++    const data = try decode(std.testing.allocator, @embedFile("1x1#FFFFFF.gif"));
++    defer std.testing.allocator.free(data.data);
++
++    try std.testing.expectEqual(1, data.width);
++    try std.testing.expectEqual(1, data.height);
++    try std.testing.expectEqualSlices(u8, &.{ 255, 255, 255, 255 }, data.data);
++}
++
++test "gif_decode_animation_single_frame" {
++    const animation = try decodeAnimation(std.testing.allocator, @embedFile("1x1#FFFFFF.gif"));
++    defer animation.deinit(std.testing.allocator);
++
++    try std.testing.expectEqual(1, animation.frames.len);
++    try std.testing.expectEqual(default_duration_ns, animation.frames[0].duration_ns);
++}
+diff --git a/pkg/wuffs/src/main.zig b/pkg/wuffs/src/main.zig
+index 207d83f..65642d3 100644
+--- a/pkg/wuffs/src/main.zig
++++ b/pkg/wuffs/src/main.zig
+@@ -1,5 +1,6 @@
+ const std = @import("std");
+ 
++pub const gif = @import("gif.zig");
+ pub const png = @import("png.zig");
+ pub const jpeg = @import("jpeg.zig");
+ pub const swizzle = @import("swizzle.zig");
+diff --git a/src/build/GhosttyXCFramework.zig b/src/build/GhosttyXCFramework.zig
+index 3afeb90..1eb3a1d 100644
+--- a/src/build/GhosttyXCFramework.zig
++++ b/src/build/GhosttyXCFramework.zig
+@@ -24,34 +24,35 @@ pub fn init(
+         Config.genericMacOSTarget(b, null),
+     ));
+ 
+-    // iOS
+-    const ios = try GhosttyLib.initStatic(b, &try deps.retarget(
+-        b,
+-        b.resolveTargetQuery(.{
+-            .cpu_arch = .aarch64,
+-            .os_tag = .ios,
+-            .os_version_min = Config.osVersionMin(.ios),
+-            .abi = null,
+-        }),
+-    ));
+-
+-    // iOS Simulator
+-    const ios_sim = try GhosttyLib.initStatic(b, &try deps.retarget(
+-        b,
+-        b.resolveTargetQuery(.{
+-            .cpu_arch = .aarch64,
+-            .os_tag = .ios,
+-            .os_version_min = Config.osVersionMin(.ios),
+-            .abi = .simulator,
+-
+-            // We force the Apple CPU model because the simulator
+-            // doesn't support the generic CPU model as of Zig 0.14 due
+-            // to missing "altnzcv" instructions, which is false. This
+-            // surely can't be right but we can fix this if/when we get
+-            // back to running simulator builds.
+-            .cpu_model = .{ .explicit = &std.Target.aarch64.cpu.apple_a17 },
+-        }),
+-    ));
++    // iOS and its simulator. These are only part of the universal framework,
++    // and building them needs Xcode's iOS SDK, so a native-only build (for
++    // example with just the Command Line Tools installed) skips them.
++    const ios_libs: ?[2]GhosttyLib = if (target == .universal) .{
++        try GhosttyLib.initStatic(b, &try deps.retarget(
++            b,
++            b.resolveTargetQuery(.{
++                .cpu_arch = .aarch64,
++                .os_tag = .ios,
++                .os_version_min = Config.osVersionMin(.ios),
++                .abi = null,
++            }),
++        )),
++        try GhosttyLib.initStatic(b, &try deps.retarget(
++            b,
++            b.resolveTargetQuery(.{
++                .cpu_arch = .aarch64,
++                .os_tag = .ios,
++                .os_version_min = Config.osVersionMin(.ios),
++                .abi = .simulator,
++                // We force the Apple CPU model because the simulator
++                // doesn't support the generic CPU model as of Zig 0.14 due
++                // to missing "altnzcv" instructions, which is false. This
++                // surely can't be right but we can fix this if/when we get
++                // back to running simulator builds.
++                .cpu_model = .{ .explicit = &std.Target.aarch64.cpu.apple_a17 },
++            }),
++        )),
++    } else null;
+ 
+     // The xcframework wraps our ghostty library so that we can link
+     // it to the final app built with Swift.
+@@ -66,14 +67,14 @@ pub fn init(
+                     .dsym = macos_universal.dsym,
+                 },
+                 .{
+-                    .library = ios.output,
++                    .library = ios_libs.?[0].output,
+                     .headers = b.path("include"),
+-                    .dsym = ios.dsym,
++                    .dsym = ios_libs.?[0].dsym,
+                 },
+                 .{
+-                    .library = ios_sim.output,
++                    .library = ios_libs.?[1].output,
+                     .headers = b.path("include"),
+-                    .dsym = ios_sim.dsym,
++                    .dsym = ios_libs.?[1].dsym,
+                 },
+             },
+ 
+diff --git a/src/renderer/generic.zig b/src/renderer/generic.zig
+index ff632f6..cffdf51 100644
+--- a/src/renderer/generic.zig
++++ b/src/renderer/generic.zig
+@@ -178,6 +178,11 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+ 
+         /// Background image, if we have one.
+         bg_image: ?imagepkg.Image = null,
++
++        /// Decoded frames of an animated background image (a GIF). The
++        /// current frame is uploaded through `bg_image` like a still; the
++        /// draw loop swaps frames as their durations elapse.
++        bg_animation: ?BgAnimation = null,
+         /// Set whenever the background image changes, signalling
+         /// that the new background image needs to be uploaded to
+         /// the GPU.
+@@ -821,6 +826,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+             self.images.deinit(self.alloc);
+ 
+             if (self.bg_image) |img| img.deinit(self.alloc);
++            if (self.bg_animation) |*anim| anim.deinit(self.alloc);
+ 
+             self.deinitShaders();
+ 
+@@ -1011,7 +1017,49 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+         /// True if our renderer has animations so that a higher frequency
+         /// timer is used.
+         pub fn hasAnimations(self: *const Self) bool {
+-            return self.has_custom_shaders;
++            return self.has_custom_shaders or self.bg_animation != null;
++        }
++
++        /// An animated background image: composited RGBA frames and the
++        /// playback position. Frames are owned here; the uploaded image
++        /// gets its own copy of the current frame.
++        const BgAnimation = struct {
++            animation: wuffs.gif.AnimationData,
++            index: usize,
++            frame_started: std.time.Instant,
++
++            fn deinit(self: *BgAnimation, alloc: Allocator) void {
++                self.animation.deinit(alloc);
++            }
++        };
++
++        /// Advance the background animation if the current frame has run
++        /// its course, queueing the next frame for upload. Caller must hold
++        /// the draw mutex.
++        fn advanceBackgroundAnimation(self: *Self) !void {
++            const anim = &(self.bg_animation orelse return);
++            const frames = anim.animation.frames;
++            if (frames.len < 2) return;
++            const now = try std.time.Instant.now();
++            if (now.since(anim.frame_started) < frames[anim.index].duration_ns) return;
++
++            anim.index = (anim.index + 1) % frames.len;
++            anim.frame_started = now;
++            const data = try self.alloc.dupe(u8, frames[anim.index].data);
++            errdefer self.alloc.free(data);
++            const image: imagepkg.Image = .{
++                .pending = .{
++                    .width = anim.animation.width,
++                    .height = anim.animation.height,
++                    .pixel_format = .rgba,
++                    .data = data.ptr,
++                },
++            };
++            if (self.bg_image) |*img| {
++                img.markForReplace(self.alloc, image);
++            } else {
++                self.bg_image = image;
++            }
+         }
+ 
+         /// True if our renderer is using vsync. If true, the renderer or apprt
+@@ -1549,7 +1597,9 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+             // Upload images to the GPU as necessary.
+             _ = self.images.upload(self.alloc, &self.api);
+ 
+-            // Upload the background image to the GPU as necessary.
++            // Advance an animated background, then upload the background
++            // image to the GPU as necessary.
++            try self.advanceBackgroundAnimation();
+             try self.uploadBackgroundImage();
+ 
+             // Update per-frame custom shader uniforms.
+@@ -1782,10 +1832,36 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+                     else => |t| t,
+                 };
+ 
++                // Any previous animation belongs to the old path.
++                if (self.bg_animation) |*anim| {
++                    anim.deinit(self.alloc);
++                    self.bg_animation = null;
++                }
++
+                 // Decode it if we know how.
+                 const image_data = switch (file_type) {
+                     .png => try wuffs.png.decode(self.alloc, contents),
+                     .jpeg => try wuffs.jpeg.decode(self.alloc, contents),
++                    .gif => gif: {
++                        // Every frame is decoded up front; the draw loop plays
++                        // them back. A single-frame GIF is just a still.
++                        const animation = try wuffs.gif.decodeAnimation(self.alloc, contents);
++                        const first = try self.alloc.dupe(u8, animation.frames[0].data);
++                        if (animation.frames.len > 1) {
++                            self.bg_animation = .{
++                                .animation = animation,
++                                .index = 0,
++                                .frame_started = try std.time.Instant.now(),
++                            };
++                        } else {
++                            animation.deinit(self.alloc);
++                        }
++                        break :gif wuffs.ImageData{
++                            .width = animation.width,
++                            .height = animation.height,
++                            .data = first,
++                        };
++                    },
+                     .unknown => {
+                         log.warn(
+                             "Cannot determine file type for background image file \"{s}\"!",
+@@ -1822,6 +1898,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+                 // If we don't have a background image path, mark our
+                 // background image for unload if we currently have one.
+                 if (self.bg_image) |*img| img.markForUnload();
++                if (self.bg_animation) |*anim| {
++                    anim.deinit(self.alloc);
++                    self.bg_animation = null;
++                }
+             }
+         }
+ 

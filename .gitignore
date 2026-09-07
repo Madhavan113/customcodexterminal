@@ -11,6 +11,7 @@ output/
 # Local dependencies, credentials, and OS files
 node_modules/
 .venv/
+.ruff_cache/
 __pycache__/
 *.pyc
 .env

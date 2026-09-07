@@ -2,12 +2,15 @@
 //!
 //! [`Shot`] maps panel cells onto the cropped photograph (or the Moiré field),
 //! applying contrast, the light-background inversion, the slow pan of stills,
-//! and the brief scan slip. [`paint_braille`] is the default halftone: each
-//! cell is a 2×4 Braille block thresholded through a vertical line screen, so
-//! midtones become dense lavender stripes, shadows thin to single dots, and
+//! and the brief scan slip. A lit photograph instead takes its exposure from
+//! [`glow`], three soft lights drifting across the band, so the picture
+//! surfaces and sinks as they pass. [`paint_braille`] is the default halftone:
+//! each cell is a 2×4 Braille block thresholded through a vertical line screen,
+//! so midtones become dense lavender stripes, shadows thin to single dots, and
 //! bright rows carry pale acid-yellow bands. [`paint_ascii`] keeps the original
-//! density ramp. [`Palette`] quantizes every color once per frame so 256-color
-//! terminals never search the palette per dot.
+//! density ramp; the ordered dither lives in `noir_dither.rs`. [`Palette`]
+//! quantizes every color once per frame so 256-color terminals never search
+//! the palette per dot.
 
 use std::f32::consts::TAU;
 use std::time::Duration;
@@ -17,6 +20,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 use super::Appearance;
+use super::Drive;
 use super::Motion;
 use super::Source;
 use crate::color::blend;
@@ -37,16 +41,33 @@ const SCREEN: [[f32; 4]; 2] = [
     [0.0625, 0.3125, 0.1875, 0.4375],
     [0.8125, 0.5625, 0.9375, 0.6875],
 ];
-const BRAILLE_BITS: [[u8; 4]; 2] = [[0x01, 0x02, 0x04, 0x40], [0x08, 0x10, 0x20, 0x80]];
+pub(super) const BRAILLE_BITS: [[u8; 4]; 2] = [[0x01, 0x02, 0x04, 0x40], [0x08, 0x10, 0x20, 0x80]];
 /// A slow threshold wave rolling across the dots keeps a still breathing without ever turning a
 /// black dot on or a white dot off.
 const WAVE: f32 = 0.05;
 const BAND_INK: f32 = 0.7;
+/// Exposure of a lit photograph: the floor keeps a sparse dithered sky where no light falls, and
+/// each light adds up to the gain on top, so lit sky nearly fills and lit water shows its texture.
+const GLOW_FLOOR: f32 = 0.30;
+const GLOW_GAIN: f32 = 0.65;
+/// Ink below the toe stays blank, so rocks and unlit water are negative space rather than noise.
+const TOE: f32 = 0.12;
+/// Midtone lift for the lit photograph, so the sea shows its texture under a light while the
+/// rocks stay dark.
+const LIFT: f32 = 0.6;
+/// A faint wave travelling along the band gives the lit picture a direction of motion.
+const RIPPLE: f32 = 0.04;
+/// Stops across the dither band's diagonal color gradient.
+pub(super) const GRADIENT_STOPS: usize = 8;
+/// Seconds the warp jump takes: the picture smears away while the star stream comes up to speed.
+pub(super) const WARP_JUMP: f32 = 2.5;
 
 /// Colors for one frame, quantized once for the terminal's color level.
 pub(super) struct Palette {
     pub(super) light: bool,
     pub(super) tones: [Color; 16],
+    /// Ink tones per gradient stop, lavender at the first stop and acid yellow at the last.
+    pub(super) gradient: [[Color; 16]; GRADIENT_STOPS],
     pub(super) panel_bg: Color,
     pub(super) band_bg: Color,
     pub(super) band_fg: Color,
@@ -55,15 +76,19 @@ pub(super) struct Palette {
 }
 
 impl Palette {
-    /// Lavender rises to pale lavender with ink and tips into acid yellow at the top; on light
-    /// backgrounds violet ink deepens instead and the accent turns olive so it still prints.
-    pub(super) fn new(appearance: Appearance, presence: f32) -> Self {
+    /// Cruise: lavender rises to pale lavender with ink and tips into acid yellow at the top.
+    /// Overdrive runs hot, magenta into amber and orange; Warp is cyan into white and acid
+    /// green. On light backgrounds every set deepens so it still prints.
+    pub(super) fn new(appearance: Appearance, presence: f32, drive: Drive) -> Self {
         let bg = appearance.background;
         let light = is_light(bg);
-        let (low, high, acid) = if light {
-            ((78, 62, 128), (44, 34, 80), (108, 112, 40))
-        } else {
-            ((184, 170, 230), (222, 216, 244), (228, 236, 150))
+        let (low, high, acid) = match (drive, light) {
+            (Drive::Cruise, false) => ((184, 170, 230), (222, 216, 244), (228, 236, 150)),
+            (Drive::Cruise, true) => ((78, 62, 128), (44, 34, 80), (108, 112, 40)),
+            (Drive::Overdrive, false) => ((214, 92, 236), (255, 178, 110), (255, 118, 72)),
+            (Drive::Overdrive, true) => ((122, 36, 142), (150, 82, 20), (168, 58, 22)),
+            (Drive::Warp, false) => ((96, 224, 255), (244, 250, 255), (200, 255, 140)),
+            (Drive::Warp, true) => ((0, 108, 150), (28, 48, 112), (70, 118, 20)),
         };
         let quantize = |rgb| best_color_for_level(rgb, appearance.color_level);
         let tones = std::array::from_fn::<_, 16, _>(|index| {
@@ -72,9 +97,21 @@ impl Palette {
             let hue = blend(acid, hue, ((ink - 0.8) / 0.2).clamp(0.0, 1.0) * 0.7);
             quantize(blend(hue, bg, (0.26 + 0.74 * ink) * presence))
         });
+        // The gradient slides from lavender through pale lavender into acid yellow; ink still
+        // lifts each stop toward the background-appropriate highlight.
+        let gradient = std::array::from_fn::<_, GRADIENT_STOPS, _>(|stop| {
+            let along = stop as f32 / (GRADIENT_STOPS - 1) as f32;
+            let base = blend(acid, low, ((along - 0.45) / 0.55).clamp(0.0, 1.0));
+            std::array::from_fn::<_, 16, _>(|index| {
+                let ink = index as f32 / 15.0;
+                let hue = blend(high, base, ((ink - 0.55) / 0.45).clamp(0.0, 1.0) * 0.6);
+                quantize(blend(hue, bg, (0.3 + 0.7 * ink) * presence))
+            })
+        });
         Self {
             light,
             tones,
+            gradient,
             panel_bg: quantize(blend(low, bg, 0.07 * presence)),
             band_bg: quantize(blend(acid, bg, 0.22 * presence)),
             band_fg: quantize(blend(acid, bg, 0.92 * presence)),
@@ -94,6 +131,12 @@ pub(super) struct Shot<'a> {
     row_px: f32,
     slip: Option<(u16, f32)>,
     light: bool,
+    extent: (f32, f32),
+    /// Horizontal motion blur in cells: highlights smear into dashes as the drive climbs.
+    streak: f32,
+    /// Multiplier on the lit picture; it fades to nothing during the warp jump.
+    fade: f32,
+    pub(super) drive: Drive,
     pub(super) seconds: f32,
     pub(super) grain_phase: usize,
     pub(super) band_phase: usize,
@@ -107,14 +150,22 @@ impl<'a> Shot<'a> {
         panel: Rect,
         motion: Motion,
         light: bool,
+        drive: Drive,
     ) -> Self {
         let elapsed = match motion {
             Motion::Idle => None,
             Motion::Working(elapsed) => Some(elapsed),
         };
         let seconds = elapsed.as_ref().map_or(0.0, Duration::as_secs_f32);
+        let jump = (seconds / WARP_JUMP).clamp(0.0, 1.0);
+        let (pan_period, streak, fade) = match drive {
+            Drive::Cruise => (16.0, 0.0, 1.0),
+            Drive::Overdrive => (5.0, 2.5, 1.0),
+            // The picture smears into short dashes and drops away fast so the stars own the band.
+            Drive::Warp => (3.0, 1.0 + 2.0 * jump, (1.0 - jump) * (1.0 - jump)),
+        };
         let (frame, source_width, source_height, still) = match source {
-            Source::Photo(study) => (
+            Source::Photo(study) | Source::Lit(study) => (
                 elapsed.map_or(0, |elapsed| study.frame_at(elapsed)),
                 study.width as f32,
                 study.height as f32,
@@ -129,7 +180,7 @@ impl<'a> Shot<'a> {
             0.0
         };
         let pan = if elapsed.is_some() {
-            pan_margin * (seconds * TAU / 16.0).sin()
+            pan_margin * (seconds * TAU / pan_period).sin()
         } else {
             0.0
         };
@@ -154,6 +205,10 @@ impl<'a> Shot<'a> {
             row_px: crop_height / f32::from(panel.height.max(1)),
             slip,
             light,
+            extent: (f32::from(panel.width), f32::from(panel.height)),
+            streak,
+            fade,
+            drive,
             seconds,
             grain_phase: (seconds * if still { 6.0 } else { 2.5 }) as usize,
             band_phase: if elapsed.is_some() {
@@ -174,14 +229,16 @@ impl<'a> Shot<'a> {
             _ => 0.0,
         };
         let luminance = match self.source {
-            Source::Photo(study) => {
-                let x0 = self.x_origin + (x + slip) * self.column_px;
+            Source::Photo(study) | Source::Lit(study) => {
+                // The sample box stretches backwards by the streak, so bright detail trails
+                // into dashes like a long exposure of something moving.
+                let x0 = self.x_origin + (x + slip - self.streak) * self.column_px;
                 let y0 = self.y_origin + y * self.row_px;
                 study.mean_luminance(
                     self.frame,
                     x0.floor() as i32,
                     y0.floor() as i32,
-                    (x0 + w * self.column_px).ceil() as i32,
+                    (x0 + (w + self.streak) * self.column_px).ceil() as i32,
                     (y0 + h * self.row_px).ceil() as i32,
                 )
             }
@@ -191,9 +248,65 @@ impl<'a> Shot<'a> {
                 self.seconds,
             ),
         };
-        let contrast = ((luminance - 0.5) * 1.25 + 0.5).clamp(0.0, 1.0);
-        if self.light { 1.0 - contrast } else { contrast }
+        match self.source {
+            Source::Photo(_) | Source::Field => {
+                let contrast = ((luminance - 0.5) * 1.25 + 0.5).clamp(0.0, 1.0);
+                if self.light { 1.0 - contrast } else { contrast }
+            }
+            Source::Lit(_) => {
+                // Light backgrounds print the shore's darkness instead, so the lights still
+                // reveal it while the sky stays blank.
+                let tone = if self.light {
+                    1.0 - luminance
+                } else {
+                    luminance
+                };
+                let (cx, cy) = (x + w / 2.0, y + h / 2.0);
+                let exposure =
+                    GLOW_FLOOR + GLOW_GAIN * glow(cx, cy, self.extent, self.seconds, self.drive);
+                let ripple = RIPPLE
+                    * (TAU * (cx / 18.0 - self.seconds / 2.8)
+                        + 1.7 * (TAU * (cy / 9.0 + self.seconds / 15.0)).sin())
+                    .sin();
+                (((tone.powf(LIFT) * exposure + ripple - TOE) / (1.0 - TOE)) * self.fade)
+                    .clamp(0.0, 1.0)
+            }
+        }
     }
+}
+
+/// Lights drifting across a panel of `extent` cells, summed and clamped to `0.0..=1.0`. `x` and
+/// `y` are cell coordinates; distances are measured in cell heights so the lights stay round.
+/// Cruise has three soft lights on slow Lissajous paths, each about a ninth of the band wide.
+/// Overdrive trades them for one tight beam sweeping the band every few seconds plus a dim
+/// follower. Time only moves the lights, so a still shot is deterministic.
+pub(super) fn glow(x: f32, y: f32, extent: (f32, f32), seconds: f32, drive: Drive) -> f32 {
+    let (width, height) = (extent.0 * 0.5, extent.1);
+    let lights: &[(f32, f32, f32, f32, f32, f32)] = match drive {
+        Drive::Cruise | Drive::Warp => &[
+            (19.0, 11.0, 0.0, 1.9, 1.0, 0.11),
+            (27.0, 13.0, 2.1, 0.4, 0.8, 0.11),
+            (23.0, 17.0, 4.2, 3.3, 0.7, 0.11),
+        ],
+        Drive::Overdrive => &[
+            (4.5, 7.0, 0.0, 1.2, 1.4, 0.06),
+            (11.0, 5.0, 2.6, 0.0, 0.5, 0.14),
+        ],
+    };
+    let mut total = 0.0;
+    for &(period_x, period_y, phase_x, phase_y, strength, spread) in lights {
+        let radius = (width * spread).max(1.0);
+        let cx = width * (0.5 + 0.42 * (TAU * seconds / period_x + phase_x).sin());
+        let cy = height * (0.5 + 0.34 * (TAU * seconds / period_y + phase_y).sin());
+        let (dx, dy) = (x * 0.5 - cx, y - cy);
+        total += strength * (-(dx * dx + dy * dy) / (2.0 * radius * radius)).exp();
+    }
+    total.clamp(0.0, 1.0)
+}
+
+/// The Braille block lighting exactly the dots in `bits`, using the `BRAILLE_BITS` layout.
+pub(super) fn braille(bits: u8) -> char {
+    char::from_u32(0x2800 | u32::from(bits)).unwrap_or(' ')
 }
 
 /// A deterministic interference field in Braille-dot units: a warped soft checker beats against
@@ -248,13 +361,12 @@ pub(super) fn paint_braille(shot: &Shot<'_>, panel: Rect, buf: &mut Buffer, pale
                 palette.panel_bg
             });
             if bits != 0 {
-                let glyph = char::from_u32(0x2800 | u32::from(bits)).unwrap_or(' ');
                 let fg = if band {
                     palette.band_fg
                 } else {
                     palette.tones[(mean * 15.0).round() as usize]
                 };
-                cell.set_char(glyph).set_fg(fg);
+                cell.set_char(braille(bits)).set_fg(fg);
             }
         }
     }

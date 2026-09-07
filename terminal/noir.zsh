@@ -1,4 +1,4 @@
-# Quiet path, branch, and exit status. Source this from an interactive zsh.
+# Colorful path, branch, marker, and exit status. Source this from an interactive zsh.
 [[ -o interactive ]] || return 0
 
 if [[ -z ${NO_COLOR-} ]]; then
@@ -14,8 +14,9 @@ _codex_noir_prompt() {
   local last_status=$?
   emulate -L zsh
   local branch='' muted='%F{8}' accent='%F{13}' normal='%f'
+  local path_color='%F{14}' marker_color='%F{11}' alert='%F{9}'
   local marker='››'
-  [[ -n ${NO_COLOR-} ]] && muted='' accent='' normal=''
+  [[ -n ${NO_COLOR-} ]] && muted='' accent='' normal='' path_color='' marker_color='' alert=''
 
   if (( $+commands[git] )); then
     branch=$(command git symbolic-ref --quiet --short HEAD 2>/dev/null) ||
@@ -25,12 +26,13 @@ _codex_noir_prompt() {
     (( ${#branch} > 40 )) && branch="${branch[1,40]}…"
   fi
 
-  typeset -g PROMPT="${muted}─${normal} %~"
+  # Colorful but calm: cyan path, magenta branch, yellow marker, red exit status.
+  typeset -g PROMPT="${muted}─${normal} ${path_color}%~${normal}"
   [[ -n $branch ]] && PROMPT+=" ${muted}/${normal} ${accent}${branch}${normal}"
   if (( last_status )); then
-    PROMPT+=" ${muted}· exit ${last_status}${normal}"
+    PROMPT+=" ${alert}· exit ${last_status}${normal}"
   fi
-  PROMPT+=$'\n'"${accent}${marker}${normal} "
+  PROMPT+=$'\n'"${marker_color}${marker}${normal} "
 }
 
 autoload -Uz add-zsh-hook
