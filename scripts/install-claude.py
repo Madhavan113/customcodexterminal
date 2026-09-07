@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install the claude-noir launcher, its dancing mascot, and its tmux options."""
+"""Install the claude-noir launcher, mascot, hook pulse, and tmux options."""
 
 import argparse
 import shutil
@@ -11,6 +11,7 @@ HOME = Path.home()
 FILES = {
     ROOT / "bin/claude-noir": HOME / ".local/bin/claude-noir",
     ROOT / "scripts/claude-dancer.py": HOME / ".local/share/claude-noir/dancer.py",
+    ROOT / "scripts/claude-pulse.py": HOME / ".local/share/claude-noir/pulse.py",
     ROOT / "terminal/claude-noir.tmux.conf": HOME
     / ".local/share/claude-noir/tmux.conf",
 }

@@ -1,12 +1,15 @@
 #!/bin/sh
-# Claude Code in the Noir terminal layout: the mascot dances in a small pane above the real
-# `claude`, which keeps its own authentication, settings, and arguments.
+# Claude Code in the Noir terminal layout: the mascot and its shiba run in a small pane above
+# the real `claude`, which keeps its own authentication, settings, and arguments. Background
+# hooks report the session's activity and effort to a private state file for the pane's rail.
 set -eu
 
 share="$HOME/.local/share/claude-noir"
 dancer="$share/dancer.py"
+pulse="$share/pulse.py"
 conf="$share/tmux.conf"
-rows="${CLAUDE_NOIR_ROWS:-7}"
+rows="${CLAUDE_NOIR_ROWS:-8}"
+state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/claude-noir"
 
 if ! command -v claude >/dev/null 2>&1; then
     printf '%s\n' "claude-noir: the claude command is not installed" >&2
@@ -21,20 +24,54 @@ if [ -n "${TMUX-}" ]; then
     exec claude "$@"
 fi
 
-# Quote every argument for tmux's shell command string.
-command='claude'
-for argument in "$@"; do
-    quoted=$(printf '%s' "$argument" | sed "s/'/'\\\\''/g")
-    command="$command '$quoted'"
-done
+# Single-quote a string for the shell that runs tmux's command strings.
+quote() {
+    printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
 
 session="claude-noir-$$"
 socket="claude-noir"
+state="$state_dir/$session.json"
+
+# Quote every argument for tmux's shell command string. Notice an ultracode launch, and a
+# --settings of the user's own, which the hook settings below must not displace.
+command='claude'
+ultracode=0
+custom_settings=0
+previous=''
+for argument in "$@"; do
+    command="$command $(quote "$argument")"
+    case "$argument" in
+        --settings|--settings=*) custom_settings=1 ;;
+        --effort=ultracode) ultracode=1 ;;
+        ultracode) if [ "$previous" = "--effort" ]; then ultracode=1; fi ;;
+    esac
+    previous="$argument"
+done
+
+environment="CLAUDE_NOIR_STATE=$(quote "$state") CLAUDE_NOIR_ULTRACODE=$ultracode"
+if [ -f "$pulse" ] && [ "$custom_settings" -eq 0 ]; then
+    # Register the pulse as a background hook for this session only. Hooks passed this way
+    # merge with the user's own settings instead of replacing them.
+    hook=$(printf 'python3 %s' "$(quote "$pulse")" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    hooks=''
+    for event in SessionStart UserPromptSubmit PreToolUse PostToolUse PostToolUseFailure \
+        PermissionRequest Notification Stop StopFailure PostModelSwitch ConfigChange SessionEnd; do
+        hooks="$hooks${hooks:+,}\"$event\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"$hook\",\"async\":true}]}]"
+    done
+    command="$command --settings $(quote "{\"hooks\":{$hooks}}")"
+fi
+
+mkdir -p "$state_dir"
+chmod 700 "$state_dir"
+rm -f "$state"
+trap 'rm -f "$state"' EXIT
+
 columns=$(tput cols 2>/dev/null || echo 120)
 lines=$(tput lines 2>/dev/null || echo 40)
 
 tmux -L "$socket" -f "$conf" new-session -d -s "$session" -x "$columns" -y "$lines" \
-    "$command; tmux -L $socket kill-session -t $session"
-tmux -L "$socket" split-window -t "$session" -b -l "$rows" "python3 '$dancer'"
+    "$environment $command; tmux -L $socket kill-session -t $session"
+tmux -L "$socket" split-window -t "$session" -b -l "$rows" "$environment python3 $(quote "$dancer")"
 tmux -L "$socket" select-pane -t "$session:.{bottom}"
-exec tmux -L "$socket" attach-session -t "$session"
+tmux -L "$socket" attach-session -t "$session"
