@@ -69,8 +69,8 @@ def main():
             session,
         ]
         prompt = (
-            "Read CLAUDE.md and README.md for the current terminal-only project.\n\n"
-            + prompt
+            "Read README.md for the current terminal project. "
+            "If CLAUDE.md exists locally, read it for additional context.\n\n" + prompt
         )
         result = subprocess.run(
             command, input=prompt, text=True, capture_output=True, cwd=ROOT, check=False

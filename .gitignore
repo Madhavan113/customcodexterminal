@@ -8,6 +8,12 @@ output/
 .claude/settings.local.json
 .agents-local/
 
+# Local instructions and root document copies
+/AGENTS.md
+/CLAUDE.md
+/LICENSE
+/NOTICE
+
 # Local dependencies, credentials, and OS files
 node_modules/
 .venv/

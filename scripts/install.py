@@ -38,6 +38,7 @@ def validate(args):
         args.source_archive,
         ROOT / "bin/codex-noir",
         ROOT / "README.md",
+        ROOT / "licenses/codex.txt",
         ROOT / "src/noir_scene.rs",
         ROOT / "src/noir_halftone.rs",
         ROOT / "assets/coast.nrf",
@@ -125,10 +126,6 @@ def build_package(stage, args):
             ".gitignore",
             ".gitattributes",
             "README.md",
-            "CLAUDE.md",
-            "AGENTS.md",
-            "LICENSE",
-            "NOTICE",
             "upstream.json",
             "ruff.toml",
             "bin/codex-noir",
@@ -150,7 +147,7 @@ def build_package(stage, args):
         ".sh",
         ".txt",
     }
-    for folder in ("src", "assets", "patches", "terminal", "scripts"):
+    for folder in ("src", "assets", "patches", "terminal", "scripts", "licenses"):
         source_files.extend(
             path
             for path in (ROOT / folder).rglob("*")

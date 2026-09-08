@@ -1,4 +1,0 @@
-Codex Noir is a personal modification of OpenAI Codex 0.153.4.
-Upstream source: https://github.com/openai/codex/tree/rust-v0.153.4
-Rust renderer and integration modifications are distributed under Apache-2.0.
-Photographic assets have separate source terms; see assets/SOURCES.md.
