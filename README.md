@@ -287,10 +287,24 @@ python3 scripts/preview-terminal.py ~/.local/share/codex-noir/0.153.4/bin/codex 
 
 Use the packaged executable so its companion tools are present. Captures and machine-readable checks are written under ignored `output/terminal-preview/`. The preview renders captured ANSI cells with local fonts and composites the wallpaper underneath. Native profile and image-bookmark settings were verified separately; a native window screenshot was unavailable because macOS Screen Recording permission was not granted.
 
-The last recorded renderer validation passed all 17 Noir tests, including layout/cursor preservation, clipping, scene/style selection, animation lifecycle, parser limits, single-cell Braille, light/256-color rendering, and the reviewed visual snapshots. The scoped Clippy fix, formatting, and CLI build also completed successfully for that build.
+Measure keyboard echo, terminal output volume, and process CPU time against the same local fixture with:
 
-That build passed eight actual CLI capture scenarios: Coast, Moire, and Flight at 112×30 in 256 colors; Coast with the ASCII style; Coast at 80×24 in truecolor; a 40×18 terminal that hides the image; and scene-off and motion-off settings. Each preserved the draft and stopped decorative movement while idle. The captures used an isolated local fixture, with no model request or change to the user's settings. Max and Ultra rail checks also passed.
+```sh
+.venv/bin/python scripts/benchmark-terminal.py ~/.local/share/codex-noir/0.153.4/bin/codex
+.venv/bin/python scripts/benchmark-terminal.py ~/.local/share/codex-noir/0.153.4/bin/codex \
+  --ansi256 --output output/terminal-benchmark-ansi256
+.venv/bin/python scripts/benchmark-terminal.py ~/.local/share/codex-noir/0.153.4/bin/codex \
+  --stream --ansi256 --cases cruise warp --output output/terminal-benchmark-streaming
+```
 
-The recorded full TUI baseline in a macOS Terminal environment was 4,077 passed, six skipped, and 31 snapshot failures: 28 expected the development version `0.0.0` instead of the pinned release `0.153.4`, and three expected an Option–Up hint where upstream selects Shift–Left for Apple Terminal. The real-binary reconnect and immediate-input checks passed. These unrelated snapshots are left unchanged. Run with `NO_COLOR` unset as shown above; it otherwise suppresses ANSI sequences expected by four cursor tests. Re-run the checks for new Rust changes instead of treating these historical results as current validation.
+The benchmark covers Cruise, Overdrive, Warp, scene-off and motion-off. `--stream` adds a 500-line response followed by continuing updates. It verifies draft and cursor preservation while working and a still picture after completion (streaming) or interruption (held response). Its latency measurements cover the CLI and an emulated terminal, not a native terminal application's display time; CPU time includes startup and shutdown. Run comparisons without a competing build.
+
+On 2026-09-07, comparing the installed `dev-small` build with the optimized release and frame cache at 120×36 in the 256-color streaming fixture reduced median keyboard echo from 50.7 to 29.2 ms in Cruise and 51.5 to 31.0 ms in Warp. Process CPU time fell from 6.72 to 2.26 seconds and 7.35 to 2.88 seconds, respectively. Both builds preserved draft text and cursor position and returned to a still idle picture. Raw captures and measurements are kept locally under ignored `output/lag-fix/`.
+
+The 2026-09-07 performance change passed all 26 Noir tests, including cached-versus-direct painting across scene, style, drive, geometry and color changes; draft/cursor preservation; animation lifecycle; parser limits; and the reviewed visual snapshots. The scoped Clippy fix, formatting, and optimized release CLI build completed successfully. All 34 Python project tests also passed, including build/installer profile and target-directory agreement.
+
+Earlier renderer validation passed eight actual CLI capture scenarios: Coast, Moire, and Flight at 112×30 in 256 colors; Coast with the ASCII style; Coast at 80×24 in truecolor; a 40×18 terminal that hides the image; and scene-off and motion-off settings. Each preserved the draft and stopped decorative movement while idle. The captures used an isolated local fixture, with no model request or change to the user's settings. Max and Ultra rail checks also passed.
+
+The full TUI suite in a macOS Terminal environment recorded 4,086 passed (one passed on retry), six skipped, and 31 snapshot failures. The same 31 failed before the performance change: 28 expect the development version `0.0.0` instead of the pinned release `0.153.4`, and three expect an Option–Up hint where upstream selects Shift–Left for Apple Terminal. The real-binary reconnect and immediate-input checks passed. These unrelated snapshots are left unchanged. Run with `NO_COLOR` unset as shown above; it otherwise suppresses ANSI sequences expected by four cursor tests. Re-run the checks for new Rust changes instead of treating these historical results as current validation.
 
 The earlier desktop app prototype is preserved at the [`app-prototype`](https://github.com/Madhavan113/customcodexterminal/tree/app-prototype) tag. Main now develops the ordinary terminal setup.
