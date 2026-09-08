@@ -11,7 +11,7 @@ import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
-from noir_project import PIN, ROOT, sha256
+from noir_project import PIN, ROOT, build_binary, sha256
 
 VERSION = PIN["version"]
 TARGET = PIN["target"]
@@ -253,7 +253,7 @@ def main():
     parser.add_argument(
         "--binary",
         type=Path,
-        default=ROOT / f"build/codex-{SOURCE_TAG}/codex-rs/target/dev-small/codex",
+        help="Built executable; defaults to the release build, respecting CARGO_TARGET_DIR and CODEX_NOIR_BUILD_PROFILE",
     )
     parser.add_argument("--patch", type=Path, default=ROOT / PIN["integration_patch"])
     parser.add_argument(
@@ -275,6 +275,8 @@ def main():
         help="Back up existing destinations before replacement",
     )
     args = parser.parse_args()
+    if args.binary is None:
+        args.binary = build_binary(args.source_root)
     print(f"Binary: {args.binary}")
     print(f"Pinned companions: {STOCK}")
     print(f"Package destination: {PACKAGE}")

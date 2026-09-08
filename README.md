@@ -185,15 +185,19 @@ This is a personal modification of OpenAI Codex **0.153.4**, using Rust **1.95.0
 Python 3.12+, Git, `just`, the pinned Rust toolchain, and the upstream macOS build prerequisites are required. Use the [pinned upstream source](https://github.com/openai/codex/tree/rust-v0.153.4) for its full development prerequisites. The installer targets Apple Silicon and reuses companion executables from an existing, exact-version Codex package.
 
 ```sh
-./scripts/build.sh
+python3 scripts/prepare-source.py
 cd build/codex-rust-v0.153.4/codex-rs
 env -u NO_COLOR TERM_PROGRAM=Apple_Terminal just test -p codex-tui --cargo-profile dev-small
 just fix -p codex-tui --profile dev-small --allow-staged
 just fmt
 cd ../../..
+# Preserve any formatter/fix edits in src/ before syncing again.
+./scripts/build.sh
 python3 scripts/install-terminal.py --apply --activate-profile
 python3 scripts/install.py --replace --apply
 ```
+
+Interactive builds use the optimized `release` profile. The installer selects that same artifact and respects `CARGO_TARGET_DIR`. For development only, set `CODEX_NOIR_BUILD_PROFILE=dev-small` for both build and install; that profile disables compiler optimization and is slower during animation.
 
 Both installers preview by default when `--apply` is omitted. Existing custom packages, launchers, and shell configuration are backed up before replacement. The Terminal installer imports a new profile, selects it for new windows, and applies it to tabs already using Overdrive Noir or Noir Velocity. Open a new shell or run `source ~/.config/zsh/noir.zsh` to load the new prompt in an existing tab.
 
@@ -209,7 +213,7 @@ export CARGO_TARGET_DIR="$noir_cache/target"
   --archive "$noir_cache/codex-rust-v0.153.4.tar.gz" \
   --adopt-existing
 python3 scripts/install.py --replace --apply \
-  --binary "$CARGO_TARGET_DIR/dev-small/codex" \
+  --binary "$CARGO_TARGET_DIR/release/codex" \
   --source-root "$noir_cache/codex-rust-v0.153.4" \
   --source-archive "$noir_cache/codex-rust-v0.153.4.tar.gz"
 ```
