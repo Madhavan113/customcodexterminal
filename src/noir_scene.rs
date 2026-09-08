@@ -44,6 +44,8 @@ use crate::terminal_palette::effective_stdout_color_level;
 
 #[path = "noir_dither.rs"]
 mod noir_dither;
+#[path = "noir_frame.rs"]
+mod noir_frame;
 #[path = "noir_halftone.rs"]
 mod noir_halftone;
 #[path = "noir_photo.rs"]
@@ -51,6 +53,8 @@ mod noir_photo;
 #[path = "noir_warp.rs"]
 mod noir_warp;
 
+use noir_frame::FrameCache;
+use noir_frame::FrameSpec;
 use noir_halftone::Palette;
 use noir_halftone::Shot;
 use noir_photo::Study;
@@ -243,6 +247,7 @@ pub(super) struct NoirScene {
     style: Option<Style>,
     drive: Option<Drive>,
     started_at: Cell<Option<Instant>>,
+    frames: FrameCache,
 }
 
 impl Default for NoirScene {
@@ -264,6 +269,7 @@ impl NoirScene {
             style: Style::from_preference(style),
             drive: None,
             started_at: Cell::new(None),
+            frames: FrameCache::default(),
         }
     }
 
@@ -292,7 +298,7 @@ impl NoirScene {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct Appearance {
     background: (u8, u8, u8),
     color_level: StdoutColorLevel,
@@ -403,15 +409,27 @@ impl Renderable for SceneComposer<'_> {
                 .composer
                 .noir_scene
                 .drive_for(self.composer.effort_tier);
-            paint(scene, style, motion, drive, picture, buf, appearance);
+            let tick = match source {
+                Source::Photo(study) | Source::Lit(study) => {
+                    study.frame_interval().unwrap_or(STILL_TICK)
+                }
+                Source::Field => STILL_TICK,
+            }
+            .min(drive.tick());
+            self.composer.noir_scene.frames.render(
+                FrameSpec {
+                    scene,
+                    style,
+                    motion,
+                    drive,
+                    appearance,
+                },
+                tick,
+                picture,
+                buf,
+            );
             if working && let Some(requester) = &self.composer.frame_requester {
-                let tick = match source {
-                    Source::Photo(study) | Source::Lit(study) => {
-                        study.frame_interval().unwrap_or(STILL_TICK)
-                    }
-                    Source::Field => STILL_TICK,
-                };
-                requester.schedule_frame_in(tick.min(drive.tick()));
+                requester.schedule_frame_in(tick);
             }
         }
         self.inner.render(content, buf);

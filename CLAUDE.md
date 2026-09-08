@@ -24,6 +24,7 @@ Within the upstream checkout:
 
 - `codex-rs/tui/src/bottom_pane/chat_composer/noir_scene.rs` wraps the existing composer in a separately reserved decorative region. The content is photographic halftone/ASCII and a Moire field.
 - `noir_scene_tests.rs` beside it covers layout, cursor/draft safety, animation lifecycle, and snapshots.
+- `noir_frame.rs` caches one decorative frame by scene, style, drive, quantized playback time, geometry and terminal appearance. Keyboard and status redraws reuse it between animation ticks; composition still skips occupied cells and preserves existing styles. Its tests compare cached output with the original painter.
 - `noir_photo.rs` parses and samples bounded grayscale frames; its tests are in `noir_photo_tests.rs`. All `noir_*.rs` modules have matching editable files under this repo's `src/`.
 - `noir_halftone.rs` handles Braille/ASCII painting, photographic crop geometry, a deterministic Moire field, the drifting glow that lights the Dither scene, and color adaptation. Its tests live in `noir_halftone_tests.rs`.
 - `noir_dither.rs` paints the screen-fixed 8×8 Bayer ordered dither as foreground-only Braille dots; its tests are in `noir_dither_tests.rs`. `CODEX_NOIR_STYLE=dither` applies it to any scene. `CODEX_NOIR_SCENE=dither` is the full-bleed background scene: the Coast photograph spans the whole band with no caption (the user wants no labels there), lit by three drifting soft lights. It defaults to the dither treatment; other scenes default to the halftone.

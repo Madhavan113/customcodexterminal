@@ -158,6 +158,7 @@ Restart Cursor; the extension patches itself in on first launch and asks for one
 | `scripts/install-workspace.py`, `scripts/requirements-workspace.txt` | Private workspace installation and pinned dependencies |
 | `scripts/test_noir_workspace.py`, `scripts/test_noir_ui.py`, `scripts/verify-workspace.py` | Workspace regression tests, terminal UI checks, and real CLI verification against local fixtures |
 | `src/noir_scene.rs` | Scene layout, lifecycle, and composer wrapper |
+| `src/noir_frame.rs` | Cached decorative frames at each scene's cadence, independent of keyboard redraws |
 | `src/noir_photo.rs` | Bounded frame parsing, timing, and luminance sampling |
 | `src/noir_halftone.rs` | Braille/ASCII painting, color adaptation, photographic crops, the Moire field, and the drifting glow |
 | `src/noir_dither.rs` | Bayer ordered-dither painting used by the `dither` style and scene |
@@ -197,7 +198,7 @@ python3 scripts/install-terminal.py --apply --activate-profile
 python3 scripts/install.py --replace --apply
 ```
 
-Interactive builds use the optimized `release` profile. The installer selects that same artifact and respects `CARGO_TARGET_DIR`. For development only, set `CODEX_NOIR_BUILD_PROFILE=dev-small` for both build and install; that profile disables compiler optimization and is slower during animation.
+Interactive builds use the optimized `release` profile. The installer selects that same artifact and respects `CARGO_TARGET_DIR`. For development only, set `CODEX_NOIR_BUILD_PROFILE=dev-small` for both build and install; that profile disables compiler optimization and is slower during animation. The scene caches its current frame between animation ticks, so typing and status redraws do not resample the photograph or advance its colors early.
 
 Both installers preview by default when `--apply` is omitted. Existing custom packages, launchers, and shell configuration are backed up before replacement. The Terminal installer imports a new profile, selects it for new windows, and applies it to tabs already using Overdrive Noir or Noir Velocity. Open a new shell or run `source ~/.config/zsh/noir.zsh` to load the new prompt in an existing tab.
 
