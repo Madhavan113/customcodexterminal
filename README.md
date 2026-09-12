@@ -19,11 +19,14 @@ In the 2026-09-07 comparison against the previous `dev-small` build, a 500-line 
 
 All 14 live CLI scenarios preserved draft text, cursor position, and idle behavior across color modes, drive settings, and motion controls. These measurements include the CLI and an emulated terminal; they do not measure a native terminal window's display latency. CPU time includes startup and shutdown. The [benchmark commands](#verification-and-history) reproduce the workload without calling a model API.
 
+With the violet warp bar enabled, the optimized Ultra build measured **30.1 ms** median keypress echo in the same 120×36, 256-color streaming workload. All six release verification scenarios preserved the draft, cursor, and idle behavior. Local captures and results are under ignored `output/warp-mode/`.
+
 ## Codex TUI: `codex-noir`
 
 ```sh
 codex-noir
 codex-noir resume --last
+codex-noir -c 'model_reasoning_effort="ultra"'
 CODEX_NOIR_SCENE=coast codex-noir
 CODEX_NOIR_SCENE=moire codex-noir
 CODEX_NOIR_SCENE=flight codex-noir
@@ -40,6 +43,8 @@ Dither is the default scene. Coast and the other photographs default to the `hal
 `CODEX_NOIR_SCENE=dither`, the default, is the background scene: the Coast photograph fills the whole band edge to edge with no caption, dithered by default, while three soft lights drift across it and the dithered shore surfaces and sinks under them.
 
 The reasoning effort drives the band. Normal effort cruises in lavender and acid yellow. **Max** shifts into overdrive: magenta-to-amber colors, a fast sweeping beam, motion-blur streaks, a faster gradient, 20 redraws a second. **Ultra** jumps to warp: over two and a half seconds the picture smears away and a star stream pours out of a vanishing point in cyan, white, and acid green at 30 redraws a second. Idle frames ignore the drive, so a resting terminal always looks the same. `CODEX_NOIR_DRIVE=cruise|overdrive|warp` pins a level for any tier.
+
+The **warp bar** appears automatically while working at the highest reasoning settings. At `xhigh` or `max`, a filled violet strip above the draft carries an oscillating **EXTRA THINKING** label; at `ultra`, **ULTRA** sweeps back and forth faster. It follows effort changes and resumed sessions, stays inside the spare row above the draft, and yields to popups. Its animation advances at most 20 times a second and stops when the turn ends. Select the effort in Codex or pass the configuration argument above; the launcher keeps your existing effort unless you change it.
 
 Images move while Codex is working and become still while idle. Coast and Transit drift gently through still photographs; Flight plays sampled footage; Moire moves its interference pattern. The scene yields to input, popups, and small terminal regions. `CODEX_NOIR_SCENE=off` hides only the scene; disabling `tui.animations` also removes the activity rail. The legacy `CODEX_NOIR_DRAGON=0` switch remains supported.
 
@@ -62,19 +67,22 @@ open -a WezTerm
 
 The config is copied to `~/.config/wezterm/wezterm.lua` and the GIF to `~/.config/wezterm/noir-velocity.gif`. Edit the two variables at the top of the config to swap the file or change `dim`, the translucent wash that keeps text readable over the picture (0 shows it exactly as shot). Terminal.app keeps a still frame of the same GIF as its wallpaper.
 
+The installed profile uses Mac-style editing shortcuts: `Command+C` copies, `Command+V` pastes, and `Command+Z` sends the terminal undo sequence used by zsh and the Codex composer. `Ctrl+C` and `Ctrl+Z` retain their normal Unix interrupt and process-suspension behavior. While Codex is open, click inside the composer to place its insertion cursor. Codex owns the mouse during that session, so hold Shift while dragging to select terminal text, then press `Command+C` to copy it.
+
 ## Claude Code: `claude-noir`
 
 `claude-noir` gives Claude Code the same setup. Claude Code is closed source, so instead of patching it the launcher opens a dedicated tmux layout: a small top pane where Claude's mascot dances across the width (bouncing, hopping, flipping, leaving a lavender dither trail) with a shiba bounding beside it, and the main pane running the real `claude` with all your arguments, authentication, and settings. Closing Claude closes the layout.
 
-The bottom row of the top pane is an effort rail, the counterpart of the Codex band. It names what Claude is doing and at which effort (`CLAUDE · THINKING · XHIGH`, the tool being run, or `WAITING FOR YOU` while a permission prompt is up) and colors the line and the tmux divider under it to match: a cyan beam for `high`, a magenta-to-amber pulse for `xhigh`, a purple wave for `max` and for turns that include `ultrathink`, a rainbow for `ultracode`, slate for `low` and `medium`, and amber while waiting. The rail moves only while Claude works and rests dim between turns.
+The bottom row of the top pane is an effort rail, the counterpart of the Codex band. While Claude works at `xhigh`, or on a turn containing `ultrathink`, it becomes a filled violet **EXTRA THINKING** bar. At `max` or with `ultracode`, the **ULTRA** label sweeps back and forth faster. The bar keeps the active tool name visible when there is room and colors the tmux divider violet. Other effort levels retain a cyan beam for `high` and slate for `low` and `medium`; permission prompts show amber `WAITING FOR YOU`. Warp stops between turns and while waiting for you. The companion keeps its existing 12-frame-per-second cadence.
 
-To know this, the launcher passes `claude` an inline `--settings` that registers `scripts/claude-pulse.py` as a background hook (`SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PermissionRequest`, `Notification`, `Stop`, and a few more) for that session only. Hooks passed this way merge with your own settings. The pulse writes a small JSON file under `~/.local/state/claude-noir/`, which the launcher removes on exit, and it does nothing outside `claude-noir`. If you pass your own `--settings`, the launcher leaves it alone and the rail shows only `CLAUDE`.
+To know this, the launcher passes `claude` an inline `--settings` that registers `scripts/claude-pulse.py` as a background hook (`SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PermissionRequest`, `Notification`, `Stop`, and a few more) for that session only. Hooks passed this way merge with your own settings. The rail prefers [Claude's reported active effort](https://code.claude.com/docs/en/hooks), with environment overrides, the launch flag, and saved settings as fallbacks. The pulse writes a small JSON file under `~/.local/state/claude-noir/`, which the launcher removes on exit, and it does nothing outside `claude-noir`. If you pass your own `--settings`, the launcher leaves it alone and the rail shows only `CLAUDE`.
 
 ```sh
 brew install tmux
 python3 scripts/install-claude.py --apply
 claude-noir
-claude-noir --effort ultracode      # rainbow rail
+claude-noir --effort xhigh         # violet EXTRA THINKING bar while working
+claude-noir --effort max           # violet ULTRA bar while working
 CLAUDE_NOIR_ROWS=10 claude-noir     # taller mascot pane (default 8)
 CLAUDE_NOIR_DANCER=off claude-noir  # plain claude
 ```
@@ -120,7 +128,7 @@ Restart Cursor; the extension patches itself in on first launch and asks for one
 | `src/noir_dither.rs` | Bayer ordered-dither painting used by the `dither` style and scene |
 | `src/noir_warp.rs` | The Ultra-effort star stream |
 | `src/noir_*tests.rs`, `src/snapshots/` | Renderer behavior and visual regression tests |
-| `src/noir_activity.rs` | The activity rail, using actual Codex effort settings |
+| `src/noir_activity.rs` | The activity rail and violet warp bar, using actual Codex effort settings |
 | `assets/` | Grayscale footage, photographs, metadata, and credits |
 | `licenses/codex.txt` | OpenAI Codex license and attribution |
 | `terminal/noir.zsh` | Colored shell prompt |
@@ -242,9 +250,11 @@ Measure keyboard echo, terminal output volume, and process CPU time against the 
   --ansi256 --output output/terminal-benchmark-ansi256
 .venv/bin/python scripts/benchmark-terminal.py ~/.local/share/codex-noir/0.153.4/bin/codex \
   --stream --ansi256 --cases cruise warp --output output/terminal-benchmark-streaming
+.venv/bin/python scripts/benchmark-terminal.py ~/.local/share/codex-noir/0.153.4/bin/codex \
+  --stream --effort ultra --cases warp motion-off --output output/terminal-benchmark-ultra
 ```
 
-The benchmark covers Cruise, Overdrive, Warp, scene-off and motion-off. `--stream` adds a 500-line response followed by continuing updates. It verifies draft and cursor preservation while working and a still picture after completion (streaming) or interruption (held response). Its latency measurements cover the CLI and an emulated terminal, not a native terminal application's display time; CPU time includes startup and shutdown. Run comparisons without a competing build.
+The benchmark covers Cruise, Overdrive, Warp, scene-off and motion-off. `--stream` adds a 500-line response followed by continuing updates. `--effort` with `xhigh`, `max`, or `ultra` also verifies the moving violet label and its removal when work ends; `--light` checks a light terminal background. It verifies draft and cursor preservation while working and a still picture after completion (streaming) or interruption (held response). Its latency measurements cover the CLI and an emulated terminal, not a native terminal application's display time; CPU time includes startup and shutdown. Run comparisons without a competing build.
 
 The recorded comparison is summarized under [Performance](#performance). Raw captures and measurements are kept locally under ignored `output/lag-fix/`.
 
@@ -253,6 +263,8 @@ The 2026-09-07 performance change passed all 26 Noir tests, including cached-ver
 Earlier renderer validation passed eight actual CLI capture scenarios: Coast, Moire, and Flight at 112×30 in 256 colors; Coast with the ASCII style; Coast at 80×24 in truecolor; a 40×18 terminal that hides the image; and scene-off and motion-off settings. Each preserved the draft and stopped decorative movement while idle. The captures used an isolated local fixture, with no model request or change to the user's settings. Max and Ultra rail checks also passed.
 
 The full TUI suite in a macOS Terminal environment recorded 4,086 passed (one passed on retry), six skipped, and 31 snapshot failures. The same 31 failed before the performance change: 28 expect the development version `0.0.0` instead of the pinned release `0.153.4`, and three expect an Option–Up hint where upstream selects Shift–Left for Apple Terminal. The real-binary reconnect and immediate-input checks passed. These unrelated snapshots are left unchanged. Run with `NO_COLOR` unset as shown above; it otherwise suppresses ANSI sequences expected by four cursor tests. Re-run the checks for new Rust changes instead of treating these historical results as current validation.
+
+The warp-bar update passed all 28 Noir tests and 14 Claude companion tests, with the new violet activity snapshot visually reviewed. Live Codex fixture checks covered `xhigh`, `max`, `ultra`, light and dark backgrounds, 256 colors, and motion-off; a private tmux check verified the Claude bar, permission pauses, and unchanged draft/cursor state. Its full TUI run reported the same 31 baseline snapshot failures plus the updated activity snapshot and one paste-timing check. Both additional checks passed in the focused follow-up; scoped Clippy and formatting completed successfully.
 
 The earlier desktop app prototype is preserved at the [`app-prototype`](https://github.com/Madhavan113/customcodexterminal/tree/app-prototype) tag. Main now develops the ordinary terminal setup.
 

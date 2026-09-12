@@ -102,6 +102,7 @@ EFFORT_DRIVES = {
     "max": "ultra",
 }
 DIVIDER = 60
+WARP_BACKGROUNDS = [53, 54, 55, 56, 57, 93, 99, 135]
 
 running = True
 
@@ -196,6 +197,17 @@ def rail_drive(state):
     return "cruise", None
 
 
+def warp_label(state):
+    """The active high-effort mode; idle and permission prompts stay out of warp."""
+    if not state or state.get("phase") not in ("thinking", "tool"):
+        return None
+    if state.get("ultracode") or state.get("effort") == "max":
+        return "ULTRA"
+    if state.get("ultrathink") or state.get("effort") == "xhigh":
+        return "EXTRA THINKING"
+    return None
+
+
 def tool_label(tool):
     name = (tool or "").rsplit("__", 1)[-1].strip().upper()
     if len(name) > 14:
@@ -259,6 +271,8 @@ def label_color(drive, phase):
 
 def divider_color(state):
     """The tmux divider under the rail follows the effort so the bar reaches Claude's pane."""
+    if warp_label(state):
+        return 135
     drive, _effort_label = rail_drive(state)
     phase = state.get("phase", "idle") if state else "idle"
     if drive is None:
@@ -286,22 +300,46 @@ def tint_divider(color):
             pass
 
 
-def paint_rail(canvas, colors, bold, row, state, seconds):
+def paint_rail(canvas, colors, backgrounds, bold, row, state, seconds):
     columns = len(canvas[row])
     drive, effort_label = rail_drive(state)
     phase = state.get("phase", "idle") if state else "idle"
     label = rail_label(state, effort_label)
+    warp = warp_label(state)
+    if warp:
+        activity = f" · {tool_label(state.get('tool'))}" if phase == "tool" else ""
+        label = f" CLAUDE{activity} · {warp} "
+        if columns < len(label) + 4:
+            label = f" {warp} "
+        if columns < len(label) + 4:
+            label = " ULTRA " if warp == "ULTRA" else " THINKING "
+        seconds = math.floor(seconds * FPS) / FPS
+        period = 1.6 if warp == "ULTRA" else 2.4
+        sway = 0.5 + 0.5 * math.sin(math.tau * seconds / period)
     start = (columns - len(label)) // 2 if columns >= len(label) + 4 else None
+    if warp and start is not None:
+        start = 2 + round((columns - len(label) - 4) * sway)
     for column in range(columns):
         index = column - start if start is not None else -1
+        if warp:
+            position = column / max(columns - 1, 1)
+            beam = math.exp(-80.0 * (position - sway) ** 2)
+            ripple = math.sin(math.tau * (position * 2.0 - seconds))
+            strength = 0.32 + 0.48 * beam + 0.20 * (0.5 + 0.5 * ripple)
+            shade = min(
+                len(WARP_BACKGROUNDS) - 1, round(strength * (len(WARP_BACKGROUNDS) - 1))
+            )
+            backgrounds[row][column] = WARP_BACKGROUNDS[shade]
         if 0 <= index < len(label):
             canvas[row][column] = label[index]
-            colors[row][column] = label_color(drive, phase)
+            colors[row][column] = 231 if warp else label_color(drive, phase)
             bold[row][column] = True
         else:
             position = column / max(columns - 1, 1)
-            canvas[row][column] = RAIL
-            colors[row][column] = rail_color(drive, phase, position, seconds)
+            canvas[row][column] = "━" if warp else RAIL
+            colors[row][column] = (
+                141 if warp else rail_color(drive, phase, position, seconds)
+            )
 
 
 def frame(seconds, columns, lines, state=None):
@@ -353,6 +391,7 @@ def frame(seconds, columns, lines, state=None):
 
     canvas = [[" "] * columns for _ in range(lines)]
     colors = [[None] * columns for _ in range(lines)]
+    backgrounds = [[None] * columns for _ in range(lines)]
     bold = [[False] * columns for _ in range(lines)]
     # Trail: a few fading dots behind whichever runner is at the rear.
     group_right = shiba_x + shiba_width if with_shiba else x + width
@@ -385,17 +424,22 @@ def frame(seconds, columns, lines, state=None):
             canvas[1][2 + column_index] = glyph
             colors[1][2 + column_index] = LAVENDER[2]
     if rail_row is not None:
-        paint_rail(canvas, colors, bold, rail_row, state, seconds)
+        paint_rail(canvas, colors, backgrounds, bold, rail_row, state, seconds)
 
     out = ["\x1b[?2026h\x1b[H"]
     for row_index in range(lines):
-        current = (None, False)
+        current = (None, False, None)
         for column_index in range(columns):
-            style = (colors[row_index][column_index], bold[row_index][column_index])
+            style = (
+                colors[row_index][column_index],
+                bold[row_index][column_index],
+                backgrounds[row_index][column_index],
+            )
             if style != current:
-                color, heavy = style
+                color, heavy, background = style
                 foreground = "39" if color is None else f"38;5;{color}"
-                out.append(f"\x1b[{1 if heavy else 22};{foreground}m")
+                background = "49" if background is None else f"48;5;{background}"
+                out.append(f"\x1b[{1 if heavy else 22};{foreground};{background}m")
                 current = style
             out.append(canvas[row_index][column_index])
         out.append("\x1b[0m")

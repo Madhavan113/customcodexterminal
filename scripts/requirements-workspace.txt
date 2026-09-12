@@ -1,2 +1,0 @@
-textual==8.2.8
-claude-agent-sdk==0.2.152

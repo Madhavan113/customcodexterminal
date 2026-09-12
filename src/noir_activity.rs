@@ -5,12 +5,13 @@ use std::cell::Cell;
 use std::time::Duration;
 use std::time::Instant;
 
+use codex_protocol::openai_models::ReasoningEffort;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Color;
 use ratatui::style::Modifier;
 
 use super::ChatComposer;
-use super::EffortTier;
 use super::popup_state::ActivePopup;
 use crate::color::blend;
 use crate::color::is_light;
@@ -21,14 +22,45 @@ use crate::terminal_palette::effective_stdout_color_level;
 
 const FRAME_TICK: Duration = Duration::from_millis(50);
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum ActivityMode {
+    #[default]
+    Standard,
+    Extra,
+    Ultra,
+}
+
 #[derive(Default)]
 pub(super) struct NoirActivity {
     pub(super) enabled: bool,
     working: bool,
+    mode: ActivityMode,
     started_at: Cell<Option<Instant>>,
 }
 
 impl NoirActivity {
+    pub(super) fn set_effort(&mut self, effort: Option<&ReasoningEffort>) {
+        let mode = match effort {
+            Some(ReasoningEffort::Ultra) => ActivityMode::Ultra,
+            Some(ReasoningEffort::XHigh | ReasoningEffort::Max | ReasoningEffort::Persistent) => {
+                ActivityMode::Extra
+            }
+            Some(
+                ReasoningEffort::None
+                | ReasoningEffort::Minimal
+                | ReasoningEffort::Low
+                | ReasoningEffort::Medium
+                | ReasoningEffort::High
+                | ReasoningEffort::Custom(_),
+            )
+            | None => ActivityMode::Standard,
+        };
+        if self.mode != mode {
+            self.started_at.set(None);
+            self.mode = mode;
+        }
+    }
+
     fn set_enabled(&mut self, enabled: bool) {
         if self.enabled != enabled {
             self.started_at.set(None);
@@ -92,7 +124,7 @@ impl ChatComposer {
             /*height*/ 1,
         );
         paint(
-            self.effort_tier,
+            self.noir_activity.mode,
             elapsed,
             rail,
             buf,
@@ -106,7 +138,7 @@ impl ChatComposer {
 }
 
 fn paint(
-    tier: Option<EffortTier>,
+    mode: ActivityMode,
     elapsed: Duration,
     rail: Rect,
     buf: &mut Buffer,
@@ -117,41 +149,56 @@ fn paint(
     if rail.is_empty() {
         return;
     }
-    // Max and Ultra reuse the prompt accent so the rail, prompt, and grayscale scene share hues.
     let light = is_light(background);
     let cyan = if light {
         (0, 105, 122)
     } else {
         (138, 246, 255)
     };
-    let seconds = elapsed.as_secs_f64();
-    let label = match tier {
-        None => " WORKING ",
-        Some(EffortTier::Max) => " MAX ",
-        Some(EffortTier::Ultra) => " ULTRA ",
+    // Keyboard redraws within a tick reuse the same animation phase. Quantize the small
+    // palette once per paint, rather than searching all 256 terminal colors for every cell.
+    let seconds = (elapsed.as_millis() / FRAME_TICK.as_millis()) as f64 * 0.05;
+    let label = match mode {
+        ActivityMode::Standard => " WORKING ",
+        ActivityMode::Extra if rail.width >= 20 => " EXTRA THINKING ",
+        ActivityMode::Extra => " THINKING ",
+        ActivityMode::Ultra => " ULTRA ",
     };
-    let label_start = rail.width.saturating_sub(label.len() as u16) / 2;
+    let period = match mode {
+        ActivityMode::Standard | ActivityMode::Extra => 2.4,
+        ActivityMode::Ultra => 1.6,
+    };
+    let sway = 0.5 + 0.5 * (std::f64::consts::TAU * seconds / period).sin();
+    let label_start = if mode == ActivityMode::Standard {
+        rail.width.saturating_sub(label.len() as u16) / 2
+    } else {
+        let travel = rail.width.saturating_sub(label.len() as u16 + 4);
+        2 + (f64::from(travel) * sway).round() as u16
+    };
+    let violet = if light {
+        (124, 58, 217)
+    } else {
+        (170, 106, 255)
+    };
+    let warp_palette: Option<[Color; 16]> = (mode != ActivityMode::Standard).then(|| {
+        std::array::from_fn(|index| {
+            best_color_for_level(
+                blend(violet, background, 0.24 + 0.44 * index as f32 / 15.0),
+                color_level,
+            )
+        })
+    });
+    let ink = best_color_for_level(violet, color_level);
+    let text = best_color_for_level(
+        if light {
+            (60, 24, 110)
+        } else {
+            (248, 235, 255)
+        },
+        color_level,
+    );
     for column in 0..rail.width {
         let position = f64::from(column) / f64::from(rail.width.max(2) - 1);
-        let (hue, strength) = match tier {
-            None => {
-                let center = (seconds / 2.4).fract();
-                let distance = (position - center).abs();
-                (cyan, 0.20 + 0.80 * (-70.0 * distance * distance).exp())
-            }
-            Some(tier @ EffortTier::Max) => {
-                let pulse = (std::f64::consts::TAU * (seconds / 2.8 - position * 0.22)).cos();
-                (tier.accent_rgb(light), 0.28 + 0.72 * (0.5 + 0.5 * pulse))
-            }
-            Some(tier @ EffortTier::Ultra) => {
-                let wave = (std::f64::consts::TAU * (position * 1.3 - seconds / 4.8)).sin();
-                let glow = (std::f64::consts::TAU * (position * 0.7 + seconds / 3.2)).cos();
-                (
-                    blend(cyan, tier.accent_rgb(light), (0.5 + 0.5 * wave) as f32),
-                    0.55 + 0.45 * (0.5 + 0.5 * glow),
-                )
-            }
-        };
         let cell = &mut buf[(rail.x + column, rail.y)];
         if cell.symbol() != " " {
             continue;
@@ -160,17 +207,28 @@ fn paint(
         let letter = label_column
             .filter(|_| rail.width >= label.len() as u16 + 4)
             .and_then(|index| label.as_bytes().get(usize::from(index)));
-        let symbol =
-            letter.map_or_else(|| "─".to_string(), |letter| char::from(*letter).to_string());
-        let strength = if letter.is_some() {
-            strength.max(0.85)
+        if let Some(palette) = &warp_palette {
+            let beam = (-80.0 * (position - sway).powi(2)).exp();
+            let ripple = (std::f64::consts::TAU * (position * 2.0 - seconds)).sin();
+            let strength = 0.32 + 0.48 * beam + 0.20 * (0.5 + 0.5 * ripple);
+            let shade = (strength * 15.0).round() as usize;
+            cell.set_char(letter.map_or('━', |letter| char::from(*letter)))
+                .set_bg(palette[shade.min(15)])
+                .set_fg(if letter.is_some() { text } else { ink });
         } else {
-            strength
-        };
-        cell.set_symbol(&symbol).set_fg(best_color_for_level(
-            blend(hue, background, strength as f32),
-            color_level,
-        ));
+            let distance = (position - (seconds / 2.4).fract()).abs();
+            let strength = 0.20 + 0.80 * (-70.0 * distance * distance).exp();
+            let strength = if letter.is_some() {
+                strength.max(0.85)
+            } else {
+                strength
+            };
+            cell.set_char(letter.map_or('─', |letter| char::from(*letter)))
+                .set_fg(best_color_for_level(
+                    blend(cyan, background, strength as f32),
+                    color_level,
+                ));
+        }
         if letter.is_some() {
             cell.modifier.insert(Modifier::BOLD);
         }

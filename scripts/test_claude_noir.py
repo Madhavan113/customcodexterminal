@@ -31,7 +31,13 @@ def rows(seconds, columns, lines, state=None):
 
 class DancerTests(unittest.TestCase):
     def test_frames_fill_the_pane_exactly(self):
-        states = (None, {"phase": "idle", "effort": "high"}, {"phase": "waiting"})
+        states = (
+            None,
+            {"phase": "idle", "effort": "high"},
+            {"phase": "waiting", "effort": "max"},
+            {"phase": "thinking", "effort": "xhigh"},
+            {"phase": "tool", "effort": "max", "tool": "Read"},
+        )
         for columns in (20, 28, 44, 60, 120):
             for lines in (3, 4, 8, 12):
                 for state in states:
@@ -55,12 +61,12 @@ class DancerTests(unittest.TestCase):
 
     def test_rail_names_the_phase_tool_and_effort(self):
         cases = {
-            ("thinking", None, "xhigh"): " CLAUDE · THINKING · XHIGH ",
+            ("thinking", None, "xhigh"): " CLAUDE · EXTRA THINKING ",
             (
                 "tool",
                 "mcp__github__list_pull_requests",
                 "max",
-            ): " CLAUDE · LIST_PULL_REQ… · MAX ",
+            ): " CLAUDE · LIST_PULL_REQ… · ULTRA ",
             ("waiting", "Bash", "high"): " CLAUDE · WAITING FOR YOU · HIGH ",
             ("idle", None, "low"): " CLAUDE · LOW ",
         }
@@ -69,9 +75,7 @@ class DancerTests(unittest.TestCase):
             self.assertIn(expected, rows(1.0, 80, 8, state)[-1])
         self.assertIn(" CLAUDE · ULTRACODE ", rows(1.0, 80, 8, {"ultracode": True})[-1])
         ultrathink = {"phase": "thinking", "effort": "xhigh", "ultrathink": True}
-        self.assertIn(
-            " CLAUDE · THINKING · ULTRATHINK ", rows(1.0, 80, 8, ultrathink)[-1]
-        )
+        self.assertIn(" CLAUDE · EXTRA THINKING ", rows(1.0, 80, 8, ultrathink)[-1])
         self.assertIn(" CLAUDE ", rows(1.0, 80, 8, None)[-1])
 
     def test_rail_is_still_while_idle_and_moves_while_busy(self):
@@ -84,16 +88,43 @@ class DancerTests(unittest.TestCase):
         self.assertNotEqual(rail(0.0, busy), rail(1.0, busy))
 
     def test_rail_colors_follow_the_effort(self):
-        for effort, ramp in (
-            ("xhigh", "overdrive"),
-            ("max", "ultra"),
-            ("high", "cruise"),
-        ):
-            rail = dancer.frame(0.7, 80, 8, {"phase": "thinking", "effort": effort})
-            colors = {
-                int(code) for code in re.findall(r"38;5;(\d+)m", rail.split("\r\n")[-1])
-            }
-            self.assertTrue(colors <= set(dancer.RAMPS[ramp]), (effort, colors))
+        for effort in ("high", "xhigh", "max"):
+            rail = dancer.frame(
+                0.7, 80, 8, {"phase": "thinking", "effort": effort}
+            ).split("\r\n")[-1]
+            colors = {int(code) for code in re.findall(r"38;5;(\d+)", rail)}
+            if effort == "high":
+                self.assertTrue(colors <= set(dancer.RAMPS["cruise"]), colors)
+            else:
+                backgrounds = {int(code) for code in re.findall(r"48;5;(\d+)", rail)}
+                self.assertTrue(backgrounds)
+                self.assertTrue(
+                    backgrounds <= set(dancer.WARP_BACKGROUNDS), backgrounds
+                )
+                self.assertIn(231, colors)
+
+    def test_warp_bar_moves_only_during_work_and_stays_inside_its_row(self):
+        for effort in ("xhigh", "max"):
+            state = {"phase": "thinking", "effort": effort}
+            title = "ULTRA" if effort == "max" else "EXTRA THINKING"
+            offsets = []
+            for seconds in (0.0, 0.5, 1.3):
+                raw = dancer.frame(seconds, 80, 8, state).split("\r\n")
+                self.assertTrue(all("48;5;" not in row for row in raw[:-1]))
+                offsets.append(SGR.sub("", raw[-1]).index(title))
+            self.assertGreater(len(set(offsets)), 1)
+            for phase in ("idle", "waiting"):
+                stopped = {**state, "phase": phase}
+                self.assertIsNone(dancer.warp_label(stopped))
+                self.assertNotIn("48;5;", dancer.frame(0.0, 80, 8, stopped))
+            idle = {**state, "phase": "idle"}
+            self.assertEqual(
+                dancer.frame(0.0, 80, 8, idle).split("\r\n")[-1],
+                dancer.frame(2.0, 80, 8, idle).split("\r\n")[-1],
+            )
+        for feature in ("ultrathink", "ultracode"):
+            state = {"phase": "thinking", feature: True}
+            self.assertIn("48;5;", dancer.frame(0.0, 80, 8, state))
 
     def test_rail_yields_when_the_runners_would_not_fit(self):
         painted = rows(1.0, 30, 3)
@@ -192,6 +223,33 @@ class PulseTests(unittest.TestCase):
         )
         pulse.update(state, {"hook_event_name": "ConfigChange"}, {}, 3)
         self.assertTrue(state["ultracode"])
+
+    def test_launcher_effort_is_a_fallback_to_current_native_hook_state(self):
+        state = {}
+        env = {"CLAUDE_NOIR_EFFORT": "max"}
+        pulse.update(state, {"hook_event_name": "SessionStart"}, env, 1)
+        self.assertEqual(state["effort"], "max")
+        pulse.update(
+            state,
+            {"hook_event_name": "UserPromptSubmit", "effort": {"level": "xhigh"}},
+            env,
+            2,
+        )
+        self.assertEqual(state["effort"], "xhigh")
+        pulse.update(
+            state,
+            {"hook_event_name": "PreToolUse"},
+            {**env, "CLAUDE_EFFORT": "high"},
+            3,
+        )
+        self.assertEqual(state["effort"], "high")
+        pulse.update(
+            state,
+            {"hook_event_name": "UserPromptSubmit"},
+            {**env, "CLAUDE_CODE_EFFORT_LEVEL": "low"},
+            4,
+        )
+        self.assertEqual(state["effort"], "low")
 
     def test_script_writes_the_state_file_and_never_fails(self):
         target = Path(self.home.name, "state", "session.json")

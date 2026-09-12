@@ -3,6 +3,7 @@
 -- Installed by scripts/install-wezterm.py to ~/.config/wezterm/wezterm.lua.
 local wezterm = require("wezterm")
 local config = wezterm.config_builder()
+local act = wezterm.action
 
 -- Tune these two lines freely.
 local wallpaper = wezterm.home_dir .. "/.config/wezterm/noir-velocity.gif"
@@ -58,5 +59,13 @@ config.window_close_confirmation = "NeverPrompt"
 config.audible_bell = "Disabled"
 config.native_macos_fullscreen_mode = true
 config.check_for_updates = false
+
+-- Mac-style clipboard and undo shortcuts. Control keys retain their Unix meanings.
+config.keys = {
+	{ key = "c", mods = "SUPER", action = act.CopyTo("Clipboard") },
+	{ key = "v", mods = "SUPER", action = act.PasteFrom("Clipboard") },
+	-- Ctrl-_ is the standard terminal undo sequence understood by zsh and Codex.
+	{ key = "z", mods = "SUPER", action = act.SendString("\x1f") },
+}
 
 return config

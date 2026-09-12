@@ -6,7 +6,7 @@
   "archive_url": "https://github.com/openai/codex/archive/refs/tags/rust-v0.153.4.tar.gz",
   "archive_sha256": "74d988c0e154aad2b8d0cca4e950fc97fe2a29ff5ebe3b0070cce6d949c9a307",
   "integration_patch": "patches/codex-integration.patch",
-  "integration_sha256": "fc8dde4e8892981a95d71cdead77b666f6dc0f76e6dd73dc1a3f54f3c8a52c92",
+  "integration_sha256": "bdcc84769bcffe5cba28b2923cd2081e221c61e21f034f854a76c33cf2ed1229",
   "overlay_target": "codex-rs/tui/src/bottom_pane/chat_composer",
   "asset_target": "codex-rs/tui/assets/noir"
 }

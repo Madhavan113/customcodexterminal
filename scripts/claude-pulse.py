@@ -96,6 +96,7 @@ def update(state, event, environ, now):
         environ.get("CLAUDE_EFFORT")
         or reported.get("level")
         or environ.get("CLAUDE_CODE_EFFORT_LEVEL")
+        or environ.get("CLAUDE_NOIR_EFFORT")
         or saved_effort(settings, state.get("model"))
     )
     if isinstance(level, str) and level.lower() in EFFORTS:

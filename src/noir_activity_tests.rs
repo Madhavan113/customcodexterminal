@@ -53,12 +53,16 @@ fn noir_activity_modes_animate_without_touching_draft_cells() {
     );
     original[(5, 1)].set_bg(Color::Magenta);
     let mut gallery = Vec::new();
-    for tier in [None, Some(EffortTier::Max), Some(EffortTier::Ultra)] {
+    for mode in [
+        ActivityMode::Standard,
+        ActivityMode::Extra,
+        ActivityMode::Ultra,
+    ] {
         let mut first = None;
         for millis in [0, 700, 1700] {
             let mut buf = original.clone();
             paint(
-                tier,
+                mode,
                 Duration::from_millis(millis),
                 rail,
                 &mut buf,
@@ -80,7 +84,13 @@ fn noir_activity_modes_animate_without_touching_draft_cells() {
                 })
                 .collect::<Vec<_>>()
                 .join(" ");
-            gallery.push(format!("{tier:?} {millis}ms\n{symbols}\n{colors}"));
+            let backgrounds = (2..30)
+                .map(|x| format!("{:?}", buf[(x, 0)].bg))
+                .collect::<Vec<_>>()
+                .join(" ");
+            gallery.push(format!(
+                "{mode:?} {millis}ms\n{symbols}\n{colors}\n{backgrounds}"
+            ));
         }
     }
     insta::assert_snapshot!("noir_activity_mode_gallery", gallery.join("\n\n"));
@@ -102,7 +112,7 @@ fn noir_activity_clips_small_offset_rails_and_preserves_occupied_cells() {
             /*height*/ 1,
         );
         paint(
-            Some(EffortTier::Ultra),
+            ActivityMode::Ultra,
             Duration::from_millis(700),
             rail,
             &mut buf,
@@ -120,8 +130,106 @@ fn noir_activity_clips_small_offset_rails_and_preserves_occupied_cells() {
 }
 
 #[test]
+fn noir_activity_follows_effective_effort_through_changes_and_session_restore() {
+    let (mut composer, _rx) = super::super::tests::new_test_composer();
+    composer.set_task_running(/*running*/ true);
+    let now = Instant::now();
+    let mut observed = Vec::new();
+    for (index, effort) in [
+        ReasoningEffort::High,
+        ReasoningEffort::XHigh,
+        ReasoningEffort::Ultra,
+    ]
+    .iter()
+    .enumerate()
+    {
+        composer.set_active_reasoning_effort(Some(effort), /*animations_enabled*/ true);
+        observed.push((
+            composer.noir_activity.mode,
+            composer
+                .noir_activity
+                .elapsed_at(now + Duration::from_secs(index as u64)),
+        ));
+    }
+    for (index, effort) in [ReasoningEffort::Max, ReasoningEffort::Medium]
+        .iter()
+        .enumerate()
+    {
+        composer.set_active_reasoning_effort_baseline(Some(effort));
+        observed.push((
+            composer.noir_activity.mode,
+            composer
+                .noir_activity
+                .elapsed_at(now + Duration::from_secs(index as u64 + 3)),
+        ));
+    }
+    assert_eq!(
+        observed,
+        vec![
+            (ActivityMode::Standard, Some(Duration::ZERO)),
+            (ActivityMode::Extra, Some(Duration::ZERO)),
+            (ActivityMode::Ultra, Some(Duration::ZERO)),
+            (ActivityMode::Extra, Some(Duration::ZERO)),
+            (ActivityMode::Standard, Some(Duration::ZERO)),
+        ]
+    );
+}
+
+#[test]
+fn noir_warp_bar_oscillates_at_a_bounded_cadence_in_both_color_modes() {
+    let area = Rect::new(
+        /*x*/ 3, /*y*/ 5, /*width*/ 80, /*height*/ 3,
+    );
+    let rail = Rect::new(
+        /*x*/ 5, /*y*/ 5, /*width*/ 76, /*height*/ 1,
+    );
+    for (background, color_level) in [
+        ((20, 19, 32), StdoutColorLevel::TrueColor),
+        ((247, 243, 236), StdoutColorLevel::Ansi256),
+    ] {
+        let mut original = Buffer::empty(area);
+        original.set_string(
+            /*x*/ 4,
+            /*y*/ 6,
+            "› preserve my draft",
+            Style::default().bg(Color::Blue),
+        );
+        let frames = [0, 49, 400, 1200].map(|millis| {
+            let mut frame = original.clone();
+            paint(
+                ActivityMode::Ultra,
+                Duration::from_millis(millis),
+                rail,
+                &mut frame,
+                background,
+                color_level,
+            );
+            assert_eq!(&frame.content[80..], &original.content[80..]);
+            frame
+        });
+        assert_eq!(
+            frames[0], frames[1],
+            "typing redraws inside one tick must reuse the bar"
+        );
+        let labels = frames.map(|frame| {
+            let line = (area.left()..area.right())
+                .map(|x| frame[(x, 5)].symbol())
+                .collect::<String>();
+            line.chars()
+                .collect::<Vec<_>>()
+                .windows(5)
+                .position(|word| word == ['U', 'L', 'T', 'R', 'A'])
+                .unwrap()
+        });
+        assert!(labels[2] > labels[0]);
+        assert!(labels[3] < labels[0]);
+    }
+}
+
+#[test]
 fn noir_activity_is_dormant_behind_a_popup_or_when_motion_is_disabled() {
     let (mut composer, _rx) = super::super::tests::new_test_composer();
+    composer.set_active_reasoning_effort_baseline(Some(&ReasoningEffort::Ultra));
     composer.set_noir_animations_enabled(/*enabled*/ true);
     composer.set_task_running(/*running*/ true);
     composer.set_text_content("/".to_string(), Vec::new(), Vec::new());

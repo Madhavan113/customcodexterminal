@@ -140,7 +140,7 @@ class LocalModel(http.server.BaseHTTPRequestHandler):
             )
 
 
-def run_case(binary, name, output, columns, rows, ansi256, streaming):
+def run_case(binary, name, output, columns, rows, ansi256, streaming, effort, light):
     scene, drive, animations = {
         "cruise": ("dither", "cruise", True),
         "overdrive": ("dither", "overdrive", True),
@@ -160,7 +160,7 @@ def run_case(binary, name, output, columns, rows, ansi256, streaming):
         server.streaming = streaming
         threading.Thread(target=server.serve_forever, daemon=True).start()
         (home / "config.toml").write_text(
-            'model = "gpt-6-astra"\nmodel_reasoning_effort = "high"\n'
+            f'model = "gpt-6-astra"\nmodel_reasoning_effort = "{effort}"\n'
             'model_provider = "local_benchmark"\ncheck_for_update_on_startup = false\n'
             '[model_providers.local_benchmark]\nname = "Local fixture"\n'
             f'base_url = "http://127.0.0.1:{server.server_port}/v1"\n'
@@ -221,8 +221,18 @@ def run_case(binary, name, output, columns, rows, ansi256, streaming):
                     raw.extend(data)
                     pending += data
                     for query, reply in (
-                        (b"\x1b]11;?", b"\x1b]11;rgb:1414/1313/2020\x1b\\"),
-                        (b"\x1b]10;?", b"\x1b]10;rgb:ecec/eaea/f5f5\x1b\\"),
+                        (
+                            b"\x1b]11;?",
+                            b"\x1b]11;rgb:f7f7/f3f3/ecec\x1b\\"
+                            if light
+                            else b"\x1b]11;rgb:1414/1313/2020\x1b\\",
+                        ),
+                        (
+                            b"\x1b]10;?",
+                            b"\x1b]10;rgb:2020/1919/3333\x1b\\"
+                            if light
+                            else b"\x1b]10;rgb:ecec/eaea/f5f5\x1b\\",
+                        ),
                         (b"\x1b[6n", b"\x1b[1;1R"),
                     ):
                         while query in pending:
@@ -243,11 +253,21 @@ def run_case(binary, name, output, columns, rows, ansi256, streaming):
             )
 
         def composer_has(text):
-            return any(line.lstrip().startswith(f"› {text}") for line in screen.display)
+            return any(
+                line.lstrip().startswith((f"› {text}", f"» {text}"))
+                for line in screen.display
+            )
+
+        def warp_bar():
+            for y, line in enumerate(screen.display):
+                for label in ("EXTRA THINKING", "ULTRA"):
+                    if label in line and "━" in line:
+                        return {"label": label, "row": y, "column": line.index(label)}
+            return None
 
         result = None
         try:
-            if not pump(10, lambda: any("›" in line for line in screen.display)):
+            if not pump(10, lambda: composer_has("")):
                 raise RuntimeError("The composer did not become ready")
             prompt = "Hold this local benchmark"
             os.write(master, b"\x1b[200~" + prompt.encode() + b"\x1b[201~")
@@ -271,6 +291,8 @@ def run_case(binary, name, output, columns, rows, ansi256, streaming):
             pump(2)
             working_bytes = len(raw) - before_bytes
             working_frames = raw.count(FRAME_END) - before_frames
+            warp_before = warp_bar()
+            warp_columns = {warp_before["column"]} if warp_before else set()
             expected, latencies = "", []
             for character in "draft-input-latency":
                 expected += character
@@ -282,6 +304,8 @@ def run_case(binary, name, output, columns, rows, ansi256, streaming):
                     )
                 latencies.append((time.perf_counter() - sent) * 1000)
                 pump(0.08)
+                if active_bar := warp_bar():
+                    warp_columns.add(active_bar["column"])
             for _ in range(5):
                 os.write(master, b"\x1b[D")
                 pump(0.08)
@@ -289,7 +313,9 @@ def run_case(binary, name, output, columns, rows, ansi256, streaming):
             pump(0.6)
             cursor_after = (screen.cursor.x, screen.cursor.y)
             cursor_preserved = cursor == cursor_after
+            warp_after = warp_bar()
             (case / "working.txt").write_text("\n".join(screen.display))
+            (case / "working.ansi").write_bytes(raw)
             if streaming:
                 server.release.set()
                 idle_marker = "Noir benchmark complete."
@@ -304,6 +330,7 @@ def run_case(binary, name, output, columns, rows, ansi256, streaming):
                         "WORKING" in line or "Working (" in line
                         for line in screen.display
                     )
+                    and warp_bar() is None
                 ),
             ):
                 raise RuntimeError("The local fixture turn did not become idle")
@@ -316,6 +343,12 @@ def run_case(binary, name, output, columns, rows, ansi256, streaming):
                 "rows": rows,
                 "ansi256": ansi256,
                 "streaming": streaming,
+                "effort": effort,
+                "light": light,
+                "warp_before": warp_before,
+                "warp_after": warp_after,
+                "warp_columns": sorted(warp_columns),
+                "warp_hidden_while_idle": warp_bar() is None,
                 "input_median_ms": round(statistics.median(latencies), 3),
                 "input_max_ms": round(max(latencies), 3),
                 "working_bytes_per_second": working_bytes // 2,
@@ -354,6 +387,13 @@ def run_case(binary, name, output, columns, rows, ansi256, streaming):
         assert result["draft_preserved"] and cursor_preserved, result
         assert result["idle_decoration_stable"], result
         assert bool(idle_art) == (animations and scene != "off"), result
+        if effort in ("xhigh", "max", "ultra") and animations:
+            label = "ULTRA" if effort == "ultra" else "EXTRA THINKING"
+            assert warp_before and warp_after, result
+            assert warp_before["label"] == warp_after["label"] == label, result
+            assert len(warp_columns) > 1, result
+        else:
+            assert warp_before is None and warp_after is None, result
         return result
 
 
@@ -372,6 +412,10 @@ def main():
     parser.add_argument("--columns", type=int, default=120)
     parser.add_argument("--rows", type=int, default=36)
     parser.add_argument("--ansi256", action="store_true")
+    parser.add_argument("--light", action="store_true")
+    parser.add_argument(
+        "--effort", choices=["high", "xhigh", "max", "ultra"], default="high"
+    )
     parser.add_argument(
         "--stream",
         action="store_true",
@@ -388,6 +432,8 @@ def main():
             args.rows,
             args.ansi256,
             args.stream,
+            args.effort,
+            args.light,
         )
         results.append(result)
         print(json.dumps(result), flush=True)

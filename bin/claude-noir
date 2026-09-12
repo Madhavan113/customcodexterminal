@@ -4,7 +4,7 @@
 # hooks report the session's activity and effort to a private state file for the pane's rail.
 set -eu
 
-share="$HOME/.local/share/claude-noir"
+share="${CLAUDE_NOIR_SHARE:-$HOME/.local/share/claude-noir}"
 dancer="$share/dancer.py"
 pulse="$share/pulse.py"
 conf="$share/tmux.conf"
@@ -33,23 +33,40 @@ session="claude-noir-$$"
 socket="claude-noir"
 state="$state_dir/$session.json"
 
-# Quote every argument for tmux's shell command string. Notice an ultracode launch, and a
+# Quote every argument for tmux's shell command string. Record an explicit effort, and a
 # --settings of the user's own, which the hook settings below must not displace.
-command='claude'
+arguments=''
 ultracode=0
+launch_effort=''
 custom_settings=0
+parse_options=1
 previous=''
 for argument in "$@"; do
-    command="$command $(quote "$argument")"
+    arguments="$arguments $(quote "$argument")"
+    if [ "$parse_options" -eq 0 ]; then
+        continue
+    fi
+    if [ "$argument" = "--" ]; then
+        parse_options=0
+        continue
+    fi
     case "$argument" in
         --settings|--settings=*) custom_settings=1 ;;
-        --effort=ultracode) ultracode=1 ;;
-        ultracode) if [ "$previous" = "--effort" ]; then ultracode=1; fi ;;
+    esac
+    effort=''
+    case "$argument" in
+        --effort=*) effort=${argument#--effort=} ;;
+        *) if [ "$previous" = "--effort" ]; then effort=$argument; fi ;;
+    esac
+    case "$effort" in
+        low|medium|high|xhigh|max) launch_effort=$effort; ultracode=0 ;;
+        ultracode) launch_effort=''; ultracode=1 ;;
     esac
     previous="$argument"
 done
 
-environment="CLAUDE_NOIR_STATE=$(quote "$state") CLAUDE_NOIR_ULTRACODE=$ultracode"
+environment="CLAUDE_NOIR_STATE=$(quote "$state") CLAUDE_NOIR_ULTRACODE=$ultracode CLAUDE_NOIR_EFFORT=$(quote "$launch_effort")"
+command="claude$arguments"
 if [ -f "$pulse" ] && [ "$custom_settings" -eq 0 ]; then
     # Register the pulse as a background hook for this session only. Hooks passed this way
     # merge with the user's own settings instead of replacing them.
@@ -59,7 +76,7 @@ if [ -f "$pulse" ] && [ "$custom_settings" -eq 0 ]; then
         PermissionRequest Notification Stop StopFailure PostModelSwitch ConfigChange SessionEnd; do
         hooks="$hooks${hooks:+,}\"$event\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"$hook\",\"async\":true}]}]"
     done
-    command="$command --settings $(quote "{\"hooks\":{$hooks}}")"
+    command="claude --settings $(quote "{\"hooks\":{$hooks}}")$arguments"
 fi
 
 mkdir -p "$state_dir"

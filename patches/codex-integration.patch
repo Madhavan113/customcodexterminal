@@ -1,5 +1,5 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index e217b70..ca93c94 100644
+index e217b702497e6ff02969a51046f7ba887024f487..ca93c945c9a5d608944d81bc0c12f6df8b9118af 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
 @@ -394,7 +394,7 @@ checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
@@ -1323,24 +1323,48 @@ index e217b70..ca93c94 100644
  dependencies = [
   "anyhow",
   "codex-login",
+diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
+index a8650e70fb1a87e00494501da70e787517050b78..2e449d1eea40b83bf2d0fc098636923e9abd6685 100644
+--- a/codex-rs/tui/src/app.rs
++++ b/codex-rs/tui/src/app.rs
+@@ -825,7 +825,7 @@ impl App {
+         let screen_size = tui.screen_size_for_event(&event)?;
+         if !matches!(
+             &event,
+-            TuiEvent::Key(_) | TuiEvent::Paste(_) | TuiEvent::FocusLost
++            TuiEvent::Key(_) | TuiEvent::Paste(_) | TuiEvent::Mouse(_) | TuiEvent::FocusLost
+         ) {
+             self.expire_pending_key_chord();
+             self.handle_draw_pre_render(tui, screen_size)?;
+@@ -895,6 +895,9 @@ impl App {
+                         ));
+                     }
+                 }
++                TuiEvent::Mouse(mouse) => {
++                    self.chat_widget.handle_mouse_event(mouse);
++                }
+                 TuiEvent::Draw | TuiEvent::Resume | TuiEvent::Resize(_) | TuiEvent::FocusGained => {
+                     if self.backtrack_render_pending {
+                         self.rebuild_transcript_after_backtrack(tui, screen_size.into())?;
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer.rs b/codex-rs/tui/src/bottom_pane/chat_composer.rs
-index 953f2e9..c4dc1a8 100644
+index 953f2e926357b847899b7129d4e5657fa996d8e4..4aa7ca058110ab799c8e0a69bc107470fa4c5759 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer.rs
-@@ -129,6 +129,12 @@
+@@ -129,6 +129,13 @@
  //! Repeated selections do not restart either effect, dropping below Max clears them, and
  //! restoration clears any transition queued while replaying the saved session. Rendering advances
  //! active transitions through the frame requester until they finish.
 +//! Noir adds a repeating activity rail in the composer's unused top padding:
-+//! cyan while working, violet at Max, and a cyan/pink aurora at Ultra. It stops
-+//! while idle, gives popups and native tier celebrations priority, and never
-+//! paints draft or attachment cells. The normal animation setting disables it.
++//! cyan while working normally, or a violet bar with an oscillating EXTRA THINKING
++//! or ULTRA label at the highest reasoning settings. It follows both live effort changes
++//! and session restoration, stops while idle, and yields to popups and native tier
++//! celebrations. Draft and attachment cells stay untouched; disabling animations hides it.
 +//! A separate photographic or Moiré scene can sit above the composer when space permits;
 +//! its wrapper reserves its own rows and delegates all input/cursor geometry.
  //!
  //! # Large Paste Placeholders
  //!
-@@ -305,6 +311,8 @@ mod completion_target;
+@@ -305,6 +312,8 @@ mod completion_target;
  mod draft_state;
  mod footer_state;
  mod history_search;
@@ -1349,7 +1373,7 @@ index 953f2e9..c4dc1a8 100644
  mod popup_state;
  mod reconnect;
  mod slash_input;
-@@ -316,6 +324,8 @@ use self::draft_state::ComposerMentionBinding;
+@@ -316,6 +325,8 @@ use self::draft_state::ComposerMentionBinding;
  use self::draft_state::DraftState;
  use self::footer_state::FooterState;
  use self::history_search::HistorySearchSession;
@@ -1358,7 +1382,33 @@ index 953f2e9..c4dc1a8 100644
  use self::popup_state::ActivePopup;
  use self::popup_state::DismissedToken;
  use self::popup_state::PopupState;
-@@ -515,6 +525,8 @@ pub(crate) struct ChatComposer {
+@@ -329,6 +340,7 @@ use crate::app_event_sender::AppEventSender;
+ use crate::bottom_pane::LocalImageAttachment;
+ use crate::bottom_pane::MentionBinding;
+ use crate::bottom_pane::textarea::TextArea;
++use crate::bottom_pane::textarea::TextAreaState;
+ use crate::clipboard_paste::normalize_pasted_path;
+ use crate::clipboard_paste::pasted_image_format;
+ use crate::history_cell;
+@@ -343,6 +355,7 @@ use codex_file_search::FileMatch;
+ #[cfg(test)]
+ use codex_plugin::AppConnectorId;
+ use codex_plugin::PluginCapabilitySummary;
++use std::cell::Cell;
+ use std::cell::OnceCell;
+ use std::collections::HashMap;
+ use std::collections::HashSet;
+@@ -353,6 +366,9 @@ use std::sync::Arc;
+ use std::time::Duration;
+ use std::time::Instant;
+ 
++use crossterm::event::MouseButton;
++use crossterm::event::MouseEvent;
++use crossterm::event::MouseEventKind;
+ use ratatui::style::Color;
+ 
+ /// If the pasted content exceeds this number of characters, replace it with a
+@@ -515,6 +531,8 @@ pub(crate) struct ChatComposer {
      effort_ignition: Option<EffortIgnition>,
      effort_status_line_transition: Option<EffortStatusLineTransition>,
      effort_observed: bool,
@@ -1367,7 +1417,16 @@ index 953f2e9..c4dc1a8 100644
      attachments: AttachmentState,
      placeholder_text: String,
      blocks_direct_input: bool,
-@@ -694,6 +706,8 @@ impl ChatComposer {
+@@ -550,6 +568,8 @@ pub(crate) struct ChatComposer {
+     history_search_next_keys: Vec<KeyBinding>,
+     editor_keymap: Arc<EditorKeymap>,
+     vim_normal_keymap: VimNormalKeymap,
++    last_textarea_rect: Cell<Option<Rect>>,
++    last_textarea_state: Cell<TextAreaState>,
+ }
+ 
+ /// A resolved legacy `$` target plus any catalog built while disambiguating shell syntax.
+@@ -694,6 +714,8 @@ impl ChatComposer {
              effort_ignition: None,
              effort_status_line_transition: None,
              effort_observed: false,
@@ -1376,15 +1435,84 @@ index 953f2e9..c4dc1a8 100644
              attachments: AttachmentState::default(),
              placeholder_text,
              blocks_direct_input: false,
-@@ -747,6 +761,7 @@ impl ChatComposer {
+@@ -728,6 +750,8 @@ impl ChatComposer {
+             history_search_next_keys: default_keymap.composer.history_search_next.clone(),
+             editor_keymap: default_editor_keymap,
+             vim_normal_keymap: default_vim_normal_keymap,
++            last_textarea_rect: Cell::new(None),
++            last_textarea_state: Cell::new(TextAreaState::default()),
+         };
+         this.draft.textarea.set_keymap_bindings(&default_keymap);
+         // Apply configuration via the setter to keep side-effects centralized.
+@@ -747,6 +771,8 @@ impl ChatComposer {
          effort: Option<&ReasoningEffort>,
          animations_enabled: bool,
      ) -> bool {
 +        self.set_noir_animations_enabled(animations_enabled);
++        self.noir_activity.set_effort(effort);
          let tier = EffortTier::from_effort(effort);
          let is_baseline = !self.effort_observed;
          self.effort_observed = true;
-@@ -4408,6 +4423,7 @@ impl ChatComposer {
+@@ -781,6 +807,7 @@ impl ChatComposer {
+         &mut self,
+         effort: Option<&ReasoningEffort>,
+     ) {
++        self.noir_activity.set_effort(effort);
+         self.effort_tier = EffortTier::from_effort(effort);
+         self.effort_observed = true;
+         self.effort_ignition = None;
+@@ -2018,6 +2045,11 @@ impl ChatComposer {
+             return self.begin_history_search();
+         }
+ 
++        let started_editor_edit = if self.draft.textarea.is_vim_enabled() {
++            false
++        } else {
++            self.begin_direct_vim_edit()
++        };
+         let result = match &mut self.popups.active {
+             ActivePopup::Command(_) => self.handle_key_event_with_slash_popup(key_event),
+             ActivePopup::File(_) => self.handle_key_event_with_file_popup(key_event),
+@@ -2028,9 +2060,38 @@ impl ChatComposer {
+         self.reset_vim_mode_after_successful_dispatch(&result.0);
+         // Update (or hide/show) popup after processing the key.
+         self.sync_popups();
++        if started_editor_edit {
++            self.finish_vim_edit();
++        }
+         result
+     }
+ 
++    /// Place the insertion cursor at a clicked cell in the most recently rendered textarea.
++    pub(crate) fn handle_mouse_event(&mut self, event: MouseEvent) -> bool {
++        if !self.draft.input_enabled
++            || self.popups.active()
++            || self.history_search.is_some()
++            || self.draft.textarea.vim_query().is_some()
++            || !matches!(event.kind, MouseEventKind::Down(MouseButton::Left))
++        {
++            return false;
++        }
++        let Some(area) = self.last_textarea_rect.get() else {
++            return false;
++        };
++        let moved = self.draft.textarea.set_cursor_from_screen_position(
++            area,
++            self.last_textarea_state.get(),
++            event.column,
++            event.row,
++        );
++        if moved {
++            self.history.reset_navigation();
++            self.sync_popups();
++        }
++        moved
++    }
++
+     /// Whether a popup or query owns input.
+     pub(crate) fn popup_active(&self) -> bool {
+         self.history_search.is_some()
+@@ -4408,6 +4469,7 @@ impl ChatComposer {
  
      pub fn set_task_running(&mut self, running: bool) {
          self.is_task_running = running;
@@ -1392,7 +1520,17 @@ index 953f2e9..c4dc1a8 100644
      }
  
      pub(crate) fn set_queue_submissions(&mut self, queue_submissions: bool) {
-@@ -5038,6 +5054,7 @@ impl ChatComposer {
+@@ -5017,6 +5079,9 @@ impl ChatComposer {
+                 Line::from(vec![placeholder]).render(textarea_rect.inner(Margin::new(0, 0)), buf);
+             }
+         }
++        self.last_textarea_rect
++            .set((!textarea_rect.is_empty()).then_some(textarea_rect));
++        self.last_textarea_state.set(*state);
+         if matches!(self.popups.active, ActivePopup::None)
+             && let Some(ignition) = &self.effort_ignition
+             && !ignition.is_finished()
+@@ -5038,6 +5103,7 @@ impl ChatComposer {
                  frame_requester.schedule_frame_in(IGNITION_FRAME_TICK);
              }
          }
@@ -1400,11 +1538,157 @@ index 953f2e9..c4dc1a8 100644
      }
  }
  
+@@ -5087,6 +5153,29 @@ mod tests {
+         )
+     }
+ 
++    #[test]
++    fn click_places_cursor_in_last_rendered_textarea() {
++        let (mut composer, _rx) = new_test_composer();
++        composer.set_text_content("abcdef".to_owned(), Vec::new(), Vec::new());
++        let area = Rect::new(
++            /*x*/ 0, /*y*/ 10, /*width*/ 20, /*height*/ 4,
++        );
++        let mut buffer = Buffer::empty(area);
++        Renderable::render(&composer, area, &mut buffer);
++        let textarea = composer
++            .last_textarea_rect
++            .get()
++            .expect("rendered textarea");
++
++        assert!(composer.handle_mouse_event(MouseEvent {
++            kind: MouseEventKind::Down(MouseButton::Left),
++            column: textarea.x + 2,
++            row: textarea.y,
++            modifiers: KeyModifiers::NONE,
++        }));
++        assert_eq!(composer.cursor(), 2);
++    }
++
+     #[test]
+     fn shortcut_footer_displays_configured_chords() {
+         use codex_config::types::KeybindingSpec;
+diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/vim_history.rs b/codex-rs/tui/src/bottom_pane/chat_composer/vim_history.rs
+index 9cd4e271100198ef5881948c8a29833ae49aad44..59976f489c1363517cbdf7e4fede77ddb0e26e72 100644
+--- a/codex-rs/tui/src/bottom_pane/chat_composer/vim_history.rs
++++ b/codex-rs/tui/src/bottom_pane/chat_composer/vim_history.rs
+@@ -12,7 +12,10 @@ use super::super::textarea::VimPersistentState;
+ use super::ChatComposer;
+ use super::ComposerDraft;
+ use crate::key_hint::KeyBindingListExt;
++use crossterm::event::KeyCode;
+ use crossterm::event::KeyEvent;
++use crossterm::event::KeyEventKind;
++use crossterm::event::KeyModifiers;
+ 
+ const MAX_VIM_UNDO_STEPS: usize = 64;
+ const MAX_VIM_UNDO_BYTES: usize = 1024 * 1024;
+@@ -66,15 +69,19 @@ impl VimHistory {
+ impl ChatComposer {
+     /// Consume undo and redo before normal-mode commands, even when their history is empty.
+     pub(super) fn handle_vim_history_key(&mut self, event: KeyEvent) -> bool {
+-        if !self.draft.textarea.is_vim_normal_mode()
+-            || self.draft.textarea.is_vim_operator_pending()
+-            || self.popups.active()
+-        {
++        let desktop_undo = !self.draft.textarea.is_vim_enabled()
++            && matches!(event.kind, KeyEventKind::Press | KeyEventKind::Repeat)
++            && event.code == KeyCode::Char('_')
++            && event.modifiers.contains(KeyModifiers::CONTROL);
++        let vim_history_key = self.draft.textarea.is_vim_normal_mode()
++            && !self.draft.textarea.is_vim_operator_pending();
++        if (!desktop_undo && !vim_history_key) || self.popups.active() {
+             return false;
+         }
+ 
+-        let redo = self.vim_normal_keymap.redo.is_pressed(event);
+-        let undo = self.vim_normal_keymap.undo.is_pressed(event);
++        let redo = vim_history_key && self.vim_normal_keymap.redo.is_pressed(event);
++        let undo =
++            desktop_undo || (vim_history_key && self.vim_normal_keymap.undo.is_pressed(event));
+         if !undo && !redo {
+             return false;
+         }
+@@ -101,7 +108,9 @@ impl ChatComposer {
+                 .textarea
+                 .swap_vim_persistent_state(&mut vim_state);
+             self.vim_history = history;
+-            self.draft.textarea.enter_vim_normal_mode();
++            if vim_history_key {
++                self.draft.textarea.enter_vim_normal_mode();
++            }
+             self.vim_history.trim();
+         }
+         true
+@@ -143,8 +152,7 @@ impl ChatComposer {
+ 
+     /// Start one standalone draft edit without splitting an active Vim command.
+     pub(super) fn begin_direct_vim_edit(&mut self) -> bool {
+-        if !self.draft.textarea.is_vim_enabled()
+-            || self.draft.textarea.is_vim_operator_pending()
++        if self.draft.textarea.is_vim_operator_pending()
+             || self.vim_history.pending.is_some()
+             || self.history_search.is_some()
+         {
+@@ -190,8 +198,9 @@ impl ChatComposer {
+ 
+     /// Commit a complete normal-mode command or one insert-mode session.
+     pub(super) fn finish_vim_edit(&mut self) {
+-        if !self.draft.textarea.is_vim_normal_mode()
+-            || self.draft.textarea.is_vim_operator_pending()
++        if self.draft.textarea.is_vim_enabled()
++            && (!self.draft.textarea.is_vim_normal_mode()
++                || self.draft.textarea.is_vim_operator_pending())
+         {
+             return;
+         }
+diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/vim_history_tests.rs b/codex-rs/tui/src/bottom_pane/chat_composer/vim_history_tests.rs
+index 1c2b265da05defa8efd636d4189bce705080454b..0dfaaec8ad85481666d113756776e927c9b448ea 100644
+--- a/codex-rs/tui/src/bottom_pane/chat_composer/vim_history_tests.rs
++++ b/codex-rs/tui/src/bottom_pane/chat_composer/vim_history_tests.rs
+@@ -45,6 +45,29 @@ fn ctrl_r(composer: &mut ChatComposer) {
+     let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
+ }
+ 
++fn ctrl_underscore(composer: &mut ChatComposer) {
++    let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char('_'), KeyModifiers::CONTROL));
++}
++
++#[test]
++fn desktop_undo_restores_insert_mode_typing_and_paste() {
++    let (mut composer, _receiver) = new_test_composer();
++    composer.set_disable_paste_burst(/*disabled*/ true);
++
++    keys(&mut composer, "abc");
++    composer.handle_paste(" DEF".to_owned());
++    assert_eq!(composer.current_text(), "abc DEF");
++
++    ctrl_underscore(&mut composer);
++    assert_eq!(composer.current_text(), "abc", "one paste is one undo step");
++    ctrl_underscore(&mut composer);
++    assert_eq!(
++        composer.current_text(),
++        "ab",
++        "typing is undoable in insert mode"
++    );
++}
++
+ #[test]
+ fn undo_and_redo_group_complete_vim_edits() {
+     for (original, command, edited) in [
 diff --git a/codex-rs/tui/src/bottom_pane/mod.rs b/codex-rs/tui/src/bottom_pane/mod.rs
-index f4caf92..407a96d 100644
+index f4caf92490eae9c7d424def499d4a5d873f48eec..5a63b98c9fa93a7a6108b8b023cffc0c944b63bb 100644
 --- a/codex-rs/tui/src/bottom_pane/mod.rs
 +++ b/codex-rs/tui/src/bottom_pane/mod.rs
-@@ -308,6 +308,7 @@ impl BottomPane {
+@@ -50,6 +50,7 @@ use codex_protocol::user_input::TextElement;
+ use crossterm::event::KeyCode;
+ use crossterm::event::KeyEvent;
+ use crossterm::event::KeyEventKind;
++use crossterm::event::MouseEvent;
+ use ratatui::buffer::Buffer;
+ use ratatui::layout::Rect;
+ use ratatui::text::Line;
+@@ -308,6 +309,7 @@ impl BottomPane {
              composer_config,
          );
          composer.set_frame_requester(frame_requester.clone());
@@ -1412,7 +1696,22 @@ index f4caf92..407a96d 100644
          let keymap = RuntimeKeymap::defaults();
          composer.set_keymap_bindings(&keymap);
          composer.set_skill_mentions(skills);
-@@ -1951,7 +1952,7 @@ impl BottomPane {
+@@ -768,6 +770,14 @@ impl BottomPane {
+         }
+     }
+ 
++    /// Route a click to the composer when no modal bottom-pane view is covering it.
++    pub(crate) fn handle_mouse_event(&mut self, event: MouseEvent) {
++        if self.view_stack.is_empty() && self.composer.handle_mouse_event(event) {
++            self.record_composer_activity_at(Instant::now());
++            self.request_redraw();
++        }
++    }
++
+     /// Return the contexts whose ordinary handlers can consume the next key.
+     pub(crate) fn keymap_contexts(&self) -> KeymapContextSet {
+         if let Some(view) = self.view_stack.last() {
+@@ -1951,7 +1961,7 @@ impl BottomPane {
                      right_reserve: composer_right_reserve,
                  }))
              };
@@ -1421,8 +1720,382 @@ index f4caf92..407a96d 100644
              RenderableItem::Owned(Box::new(flex2))
          }
      }
+diff --git a/codex-rs/tui/src/bottom_pane/textarea.rs b/codex-rs/tui/src/bottom_pane/textarea.rs
+index 8dd6d331be5e1c88aec87a08f424046f6364b483..83072408c5ca1a2f4d618b0eeed31da35fd4c973 100644
+--- a/codex-rs/tui/src/bottom_pane/textarea.rs
++++ b/codex-rs/tui/src/bottom_pane/textarea.rs
+@@ -481,6 +481,55 @@ impl TextArea {
+         self.preferred_col = None;
+     }
+ 
++    /// Move the insertion cursor to the editable cell selected inside the last rendered viewport.
++    ///
++    /// Wrapped-line ranges include a one-byte cursor sentinel, so the end of a visual row maps to
++    /// the insertion point immediately after its visible text. Clicking a wide grapheme maps to
++    /// its leading boundary, matching the cell-oriented cursor used by terminal emulators.
++    pub(crate) fn set_cursor_from_screen_position(
++        &mut self,
++        area: Rect,
++        state: TextAreaState,
++        column: u16,
++        row: u16,
++    ) -> bool {
++        if area.is_empty()
++            || column < area.x
++            || column >= area.right()
++            || row < area.y
++            || row >= area.bottom()
++        {
++            return false;
++        }
++
++        let lines = self.wrapped_lines(area.width);
++        let effective_scroll = self.effective_scroll(area, &lines, state.scroll);
++        let line_index =
++            usize::from(effective_scroll).saturating_add(usize::from(row.saturating_sub(area.y)));
++        let Some(line) = lines.get(line_index).cloned() else {
++            return false;
++        };
++        drop(lines);
++        let line_end = line.end.saturating_sub(1).min(self.text.len());
++        let target_col = usize::from(column.saturating_sub(area.x));
++        let visible = wrapping::visible_prefix(&self.text[line.start..line_end], area.width);
++        let visible = text_for_display(visible);
++        let mut display_col = 0usize;
++        let mut target = line.start + visible.len();
++        for (offset, grapheme) in visible.grapheme_indices(/*is_extended*/ true) {
++            let grapheme_width = display_width(grapheme);
++            if target_col < display_col.saturating_add(grapheme_width.max(1)) {
++                target = line.start + offset;
++                break;
++            }
++            display_col = display_col.saturating_add(grapheme_width);
++        }
++
++        let previous = self.cursor_pos;
++        self.set_cursor(target);
++        self.cursor_pos != previous
++    }
++
+     pub fn desired_height(&self, width: u16) -> u16 {
+         self.wrapped_lines(width).len() as u16
+     }
+@@ -2336,6 +2385,36 @@ mod tests {
+         assert_eq!(t.text(), "a你");
+     }
+ 
++    #[test]
++    fn mouse_position_moves_cursor_across_wrapped_unicode_text() {
++        let mut t = ta_with("ab你cd");
++        let area = Rect::new(
++            /*x*/ 4, /*y*/ 7, /*width*/ 4, /*height*/ 2,
++        );
++        let state = TextAreaState::default();
++
++        assert!(t.set_cursor_from_screen_position(area, state, /*column*/ 6, /*row*/ 7));
++        assert_eq!(
++            t.cursor(),
++            2,
++            "wide character maps to its leading byte boundary"
++        );
++
++        assert!(t.set_cursor_from_screen_position(area, state, /*column*/ 5, /*row*/ 8));
++        assert_eq!(
++            t.cursor(),
++            6,
++            "second visual row maps back to its source range"
++        );
++
++        assert!(!t.set_cursor_from_screen_position(area, state, /*column*/ 3, /*row*/ 7));
++        assert_eq!(
++            t.cursor(),
++            6,
++            "clicks outside the textarea leave the cursor alone"
++        );
++    }
++
+     #[test]
+     fn delete_backward_and_forward_edges() {
+         let mut t = ta_with("abc");
+diff --git a/codex-rs/tui/src/chatwidget.rs b/codex-rs/tui/src/chatwidget.rs
+index 40eadfaf58d03b19b579965ca803d4e0d90c8fc3..3c3e27b4671899028f02e6aa07cff15ab63322b7 100644
+--- a/codex-rs/tui/src/chatwidget.rs
++++ b/codex-rs/tui/src/chatwidget.rs
+@@ -165,6 +165,7 @@ use crossterm::event::KeyCode;
+ use crossterm::event::KeyEvent;
+ use crossterm::event::KeyEventKind;
+ use crossterm::event::KeyModifiers;
++use crossterm::event::MouseEvent;
+ use ratatui::buffer::Buffer;
+ use ratatui::layout::Rect;
+ use ratatui::style::Modifier;
+diff --git a/codex-rs/tui/src/chatwidget/interaction.rs b/codex-rs/tui/src/chatwidget/interaction.rs
+index 015a69807f2462ed9b9358b7dcb01ae12f79cbd6..cce35913a864ec969da6fdbfd8cc0be3887a4686 100644
+--- a/codex-rs/tui/src/chatwidget/interaction.rs
++++ b/codex-rs/tui/src/chatwidget/interaction.rs
+@@ -482,6 +482,10 @@ impl ChatWidget {
+         self.bottom_pane.handle_paste(text);
+     }
+ 
++    pub(crate) fn handle_mouse_event(&mut self, event: MouseEvent) {
++        self.bottom_pane.handle_mouse_event(event);
++    }
++
+     // Returns true if caller should skip rendering this frame (a future frame is scheduled).
+     pub(crate) fn handle_paste_burst_tick(&mut self, frame_requester: FrameRequester) -> bool {
+         if self.bottom_pane.flush_paste_burst_if_due() {
+diff --git a/codex-rs/tui/src/cwd_prompt.rs b/codex-rs/tui/src/cwd_prompt.rs
+index 9d54384479a40e6fe6edf34879f3e5a8b374b8b9..b98cd87b242ea439774eafa339f1586b8265d16e 100644
+--- a/codex-rs/tui/src/cwd_prompt.rs
++++ b/codex-rs/tui/src/cwd_prompt.rs
+@@ -133,7 +133,7 @@ pub(crate) async fn run_cwd_selection_prompt(
+             tui.screen_size_for_event(&event)?;
+             match event {
+                 TuiEvent::Key(key_event) => screen.handle_key(key_event),
+-                TuiEvent::Paste(_) | TuiEvent::FocusLost => {}
++                TuiEvent::Paste(_) | TuiEvent::Mouse(_) | TuiEvent::FocusLost => {}
+                 TuiEvent::Draw | TuiEvent::Resume | TuiEvent::Resize(_) | TuiEvent::FocusGained => {
+                     tui.draw(u16::MAX, |frame| {
+                         frame.render_widget_ref(&screen, frame.area());
+diff --git a/codex-rs/tui/src/external_agent_config_migration/mod.rs b/codex-rs/tui/src/external_agent_config_migration/mod.rs
+index a80fe03af1e0106bcebdef5dba939949cd5c376f..bd6683a491aa09c0f3b8460b5b4720a4a1dc7d6f 100644
+--- a/codex-rs/tui/src/external_agent_config_migration/mod.rs
++++ b/codex-rs/tui/src/external_agent_config_migration/mod.rs
+@@ -108,7 +108,7 @@ pub(crate) async fn run_external_agent_config_migration_prompt(
+             let _ = tui.screen_size_for_event(&event);
+             match event {
+                 TuiEvent::Key(key_event) => screen.handle_key(key_event),
+-                TuiEvent::Paste(_) | TuiEvent::FocusLost => {}
++                TuiEvent::Paste(_) | TuiEvent::Mouse(_) | TuiEvent::FocusLost => {}
+                 TuiEvent::Draw | TuiEvent::Resume | TuiEvent::Resize(_) | TuiEvent::FocusGained => {
+                     let _ = tui.draw(u16::MAX, |frame| {
+                         frame.render_widget_ref(&screen, frame.area());
+diff --git a/codex-rs/tui/src/external_agent_config_migration/source.rs b/codex-rs/tui/src/external_agent_config_migration/source.rs
+index bc01ad78c39722c13fb4c1a08676238ea34bba23..c20e910642e4a5a77b18fff6d66731b150ee1ea1 100644
+--- a/codex-rs/tui/src/external_agent_config_migration/source.rs
++++ b/codex-rs/tui/src/external_agent_config_migration/source.rs
+@@ -65,7 +65,7 @@ pub(crate) async fn run_external_agent_config_source_prompt(
+             let _ = tui.screen_size_for_event(&event);
+             match event {
+                 TuiEvent::Key(key_event) => screen.handle_key(key_event),
+-                TuiEvent::Paste(_) | TuiEvent::FocusLost => {}
++                TuiEvent::Paste(_) | TuiEvent::Mouse(_) | TuiEvent::FocusLost => {}
+                 TuiEvent::Draw | TuiEvent::Resume | TuiEvent::Resize(_) | TuiEvent::FocusGained => {
+                     let _ = tui.draw(u16::MAX, |frame| {
+                         frame.render_widget_ref(&screen, frame.area());
+diff --git a/codex-rs/tui/src/model_migration.rs b/codex-rs/tui/src/model_migration.rs
+index 094fb731b0f44d50c1d6e2a447ec6e80fb5ddbc5..56dec6bc918300d269739fb18b679dfd2a87061b 100644
+--- a/codex-rs/tui/src/model_migration.rs
++++ b/codex-rs/tui/src/model_migration.rs
+@@ -154,7 +154,7 @@ pub(crate) async fn run_model_migration_prompt(
+             let _ = alt.tui.screen_size_for_event(&event);
+             match event {
+                 TuiEvent::Key(key_event) => screen.handle_key(key_event),
+-                TuiEvent::Paste(_) | TuiEvent::FocusLost => {}
++                TuiEvent::Paste(_) | TuiEvent::Mouse(_) | TuiEvent::FocusLost => {}
+                 TuiEvent::Draw | TuiEvent::Resume | TuiEvent::Resize(_) | TuiEvent::FocusGained => {
+                     let _ = alt.tui.draw(u16::MAX, |frame| {
+                         frame.render_widget_ref(&screen, frame.area());
+diff --git a/codex-rs/tui/src/onboarding/onboarding_screen.rs b/codex-rs/tui/src/onboarding/onboarding_screen.rs
+index 39e06b8b1b574db93c27aeeb58801c0460fa43d2..3c8618ee00e7c5cb40f29a5975dfa1e2ba8614ce 100644
+--- a/codex-rs/tui/src/onboarding/onboarding_screen.rs
++++ b/codex-rs/tui/src/onboarding/onboarding_screen.rs
+@@ -541,6 +541,7 @@ pub(crate) async fn run_onboarding_app(
+                         TuiEvent::Paste(text) => {
+                             onboarding_screen.handle_paste(text);
+                         }
++                        TuiEvent::Mouse(_) => {}
+                         TuiEvent::Draw
+                         | TuiEvent::Resume
+                         | TuiEvent::Resize(_)
+diff --git a/codex-rs/tui/src/resume_picker.rs b/codex-rs/tui/src/resume_picker.rs
+index 8885451703794648136a01846689f767ef4df0b2..8d26c164beb66f5cc86fda72d5c2684c4e8a07cb 100644
+--- a/codex-rs/tui/src/resume_picker.rs
++++ b/codex-rs/tui/src/resume_picker.rs
+@@ -576,6 +576,7 @@ async fn run_session_picker_with_loader(
+                     TuiEvent::Paste(pasted) => {
+                         state.handle_paste(pasted);
+                     }
++                    TuiEvent::Mouse(_) => {}
+                     TuiEvent::Draw | TuiEvent::Resume | TuiEvent::Resize(_) | TuiEvent::FocusGained => {
+                         let list_width = list_viewport_width(screen_size.width);
+                         let list_height =
+diff --git a/codex-rs/tui/src/startup_draft.rs b/codex-rs/tui/src/startup_draft.rs
+index e4284a58122913d6336ad7adea90bdff03f6137f..a55c1e52d423b4fe657c71193aafd8d1ef30b996 100644
+--- a/codex-rs/tui/src/startup_draft.rs
++++ b/codex-rs/tui/src/startup_draft.rs
+@@ -304,6 +304,7 @@ impl StartupDraftPump {
+                     return Ok(());
+                 }
+                 TuiEvent::Paste(text) => !text.is_empty(),
++                TuiEvent::Mouse(_) => false,
+                 TuiEvent::Draw | TuiEvent::Resize(_) | TuiEvent::Resume | TuiEvent::FocusGained => {
+                     self.pending_paste_newline = Some((started_at, newlines));
+                     if self.initial_screen == StartupDraftInitialScreen::Composer {
+@@ -362,6 +363,11 @@ impl StartupDraftPump {
+                     self.bottom_pane.handle_paste(text);
+                 }
+             }
++            TuiEvent::Mouse(mouse) => {
++                if self.initial_screen == StartupDraftInitialScreen::Composer {
++                    self.bottom_pane.handle_mouse_event(mouse);
++                }
++            }
+             TuiEvent::Draw | TuiEvent::Resize(_) | TuiEvent::Resume | TuiEvent::FocusGained => {}
+             TuiEvent::FocusLost => return Ok(()),
+         }
+diff --git a/codex-rs/tui/src/startup_hooks_review.rs b/codex-rs/tui/src/startup_hooks_review.rs
+index a4b40a008b15782db48198b843263891e3dc7069..5734746b4ac7bb13d74827dd4ab3de117adc1b7e 100644
+--- a/codex-rs/tui/src/startup_hooks_review.rs
++++ b/codex-rs/tui/src/startup_hooks_review.rs
+@@ -181,7 +181,7 @@ async fn run_startup_hooks_review_app(
+                     }
+                 }
+             }
+-            TuiEvent::Paste(_) | TuiEvent::FocusLost => {}
++            TuiEvent::Paste(_) | TuiEvent::Mouse(_) | TuiEvent::FocusLost => {}
+             TuiEvent::Draw | TuiEvent::Resume | TuiEvent::Resize(_) | TuiEvent::FocusGained => {
+                 draw_view(tui, &view)?;
+             }
+diff --git a/codex-rs/tui/src/tui.rs b/codex-rs/tui/src/tui.rs
+index 814e01d8449788d873c0cd5bd089bb1b3dce78fa..69d2efe1ad38723079e343450808c8c5b902ed6f 100644
+--- a/codex-rs/tui/src/tui.rs
++++ b/codex-rs/tui/src/tui.rs
+@@ -19,10 +19,13 @@ use crossterm::SynchronizedUpdate;
+ use crossterm::cursor::SetCursorStyle;
+ use crossterm::event::DisableBracketedPaste;
+ use crossterm::event::DisableFocusChange;
++use crossterm::event::DisableMouseCapture;
+ use crossterm::event::EnableBracketedPaste;
+ #[cfg(not(windows))]
+ use crossterm::event::EnableFocusChange;
++use crossterm::event::EnableMouseCapture;
+ use crossterm::event::KeyEvent;
++use crossterm::event::MouseEvent;
+ use crossterm::terminal::EnterAlternateScreen;
+ use crossterm::terminal::LeaveAlternateScreen;
+ #[cfg(not(unix))]
+@@ -228,6 +231,7 @@ pub fn set_modes() -> Result<()> {
+     ensure_virtual_terminal_processing()?;
+ 
+     execute!(stdout(), EnableBracketedPaste)?;
++    execute!(stdout(), EnableMouseCapture)?;
+ 
+     enable_raw_mode()?;
+     #[cfg(windows)]
+@@ -315,6 +319,9 @@ fn restore_common(
+     if let Err(err) = execute!(stdout(), DisableBracketedPaste) {
+         first_error.get_or_insert(err);
+     }
++    if let Err(err) = execute!(stdout(), DisableMouseCapture) {
++        first_error.get_or_insert(err);
++    }
+     let _ = execute!(stdout(), DisableFocusChange);
+     if matches!(raw_mode_restore, RawModeRestore::Disable)
+         && let Err(err) = disable_raw_mode()
+@@ -564,6 +571,8 @@ pub enum TuiEvent {
+     Key(KeyEvent),
+     /// A bracketed paste payload normalized by the app layer before it reaches the composer.
+     Paste(String),
++    /// A mouse event reported while the TUI owns terminal mouse capture.
++    Mouse(MouseEvent),
+     /// A terminal size notification and its reported dimensions.
+     ///
+     /// Resize is separate from `Draw` so the app can run feature-gated pre-render logic without
+diff --git a/codex-rs/tui/src/tui/event_stream.rs b/codex-rs/tui/src/tui/event_stream.rs
+index de4ceae632f5b95ba20bfa5bf6d2598e40ce7a61..cbdcf0d9fb27a38ec0f23984475d1ed75bd96268 100644
+--- a/codex-rs/tui/src/tui/event_stream.rs
++++ b/codex-rs/tui/src/tui/event_stream.rs
+@@ -26,6 +26,8 @@ use std::task::Context;
+ use std::task::Poll;
+ 
+ use crossterm::event::Event;
++use crossterm::event::MouseButton;
++use crossterm::event::MouseEventKind;
+ use tokio::sync::broadcast;
+ use tokio::sync::watch;
+ use tokio_stream::Stream;
+@@ -271,6 +273,11 @@ impl<S: EventSource + Default + Unpin> TuiEventStream<S> {
+                 Some(TuiEvent::Resize(ratatui::layout::Size { width, height }))
+             }
+             Event::Paste(pasted) => Some(TuiEvent::Paste(pasted)),
++            Event::Mouse(mouse)
++                if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) =>
++            {
++                Some(TuiEvent::Mouse(mouse))
++            }
+             Event::FocusGained => {
+                 self.terminal_focused.store(true, Ordering::Relaxed);
+                 // Keep the startup-cached palette: querying terminal colors here blocks the
+@@ -441,6 +448,21 @@ mod tests {
+         }
+     }
+ 
++    #[tokio::test(flavor = "current_thread")]
++    async fn left_click_is_forwarded_with_terminal_coordinates() {
++        let (broker, handle, _draw_tx, draw_rx, terminal_focused) = setup();
++        let mut stream = make_stream(broker, draw_rx, terminal_focused);
++        let mouse = MouseEvent {
++            kind: MouseEventKind::Down(MouseButton::Left),
++            column: 12,
++            row: 8,
++            modifiers: KeyModifiers::NONE,
++        };
++        handle.send(Ok(Event::Mouse(mouse)));
++
++        assert!(matches!(stream.next().await, Some(TuiEvent::Mouse(event)) if event == mouse));
++    }
++
+     #[tokio::test(flavor = "current_thread")]
+     async fn focus_lost_is_forwarded_and_updates_terminal_state() {
+         let (broker, handle, _draw_tx, draw_rx, terminal_focused) = setup();
+diff --git a/codex-rs/tui/src/tui/screen_size.rs b/codex-rs/tui/src/tui/screen_size.rs
+index c9f657886e67fd00d2def92a2ba3a9ae0888b982..d99b1a9baa74b9f0a575ef5479bf2439ab9e16ae 100644
+--- a/codex-rs/tui/src/tui/screen_size.rs
++++ b/codex-rs/tui/src/tui/screen_size.rs
+@@ -47,11 +47,13 @@ impl Tui {
+             TuiEvent::Draw | TuiEvent::FocusGained => {
+                 self.screen_size.deferred_size.take().unwrap_or(cached)
+             }
+-            TuiEvent::Key(_) | TuiEvent::Paste(_) | TuiEvent::FocusLost => cached,
++            TuiEvent::Key(_) | TuiEvent::Paste(_) | TuiEvent::Mouse(_) | TuiEvent::FocusLost => {
++                cached
++            }
+         };
+         self.screen_size.pending_draw_size = (!matches!(
+             event,
+-            TuiEvent::Key(_) | TuiEvent::Paste(_) | TuiEvent::FocusLost
++            TuiEvent::Key(_) | TuiEvent::Paste(_) | TuiEvent::Mouse(_) | TuiEvent::FocusLost
+         ))
+         .then_some(size);
+         Ok(size)
+diff --git a/codex-rs/tui/src/unarchive_prompt.rs b/codex-rs/tui/src/unarchive_prompt.rs
+index 3f5182276287ba064bca920c049ac38fdce6f9a6..b6aceca3c4edb3a10a03527c656ed65682507397 100644
+--- a/codex-rs/tui/src/unarchive_prompt.rs
++++ b/codex-rs/tui/src/unarchive_prompt.rs
+@@ -54,6 +54,7 @@ pub(crate) async fn run_unarchive_prompt(
+                 }
+             }
+             TuiEvent::Paste(_)
++            | TuiEvent::Mouse(_)
+             | TuiEvent::Draw
+             | TuiEvent::Resize(_)
+             | TuiEvent::Resume
+diff --git a/codex-rs/tui/src/update_prompt.rs b/codex-rs/tui/src/update_prompt.rs
+index 688d1134877961f20d7fa16354b568394f74c2fe..d23699a0b3e025c385b2903e80a146ba963c16c9 100644
+--- a/codex-rs/tui/src/update_prompt.rs
++++ b/codex-rs/tui/src/update_prompt.rs
+@@ -59,7 +59,7 @@ pub(crate) async fn run_update_prompt_if_needed(
+             tui.screen_size_for_event(&event)?;
+             match event {
+                 TuiEvent::Key(key_event) => screen.handle_key(key_event),
+-                TuiEvent::Paste(_) | TuiEvent::FocusLost => {}
++                TuiEvent::Paste(_) | TuiEvent::Mouse(_) | TuiEvent::FocusLost => {}
+                 TuiEvent::Draw | TuiEvent::Resume | TuiEvent::Resize(_) | TuiEvent::FocusGained => {
+                     tui.draw(u16::MAX, |frame| {
+                         frame.render_widget_ref(&screen, frame.area());
 diff --git a/codex-rs/tui/tests/suite/focus_palette.rs b/codex-rs/tui/tests/suite/focus_palette.rs
-index 71a4cb5..36c3858 100644
+index 71a4cb57ba94a235381d66a6e25258741c61a142..36c385819da71cbde9511439663ab4d7e927e578 100644
 --- a/codex-rs/tui/tests/suite/focus_palette.rs
 +++ b/codex-rs/tui/tests/suite/focus_palette.rs
 @@ -229,6 +229,19 @@ impl PtyCodex {
@@ -1446,7 +2119,7 @@ index 71a4cb5..36c3858 100644
      }
  
 diff --git a/codex-rs/tui/tests/suite/reconnect.rs b/codex-rs/tui/tests/suite/reconnect.rs
-index fe2cc52..3bb5ffc 100644
+index fe2cc52cfd9fa0a5570b3e3f4167a573ccb32efc..3bb5ffca46afe4e26b91248834d0de45c39cbee0 100644
 --- a/codex-rs/tui/tests/suite/reconnect.rs
 +++ b/codex-rs/tui/tests/suite/reconnect.rs
 @@ -151,7 +151,8 @@ async fn automatic_reconnect_restores_draft_and_routes_new_notifications() -> Re
