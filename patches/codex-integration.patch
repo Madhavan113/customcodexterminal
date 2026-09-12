@@ -1958,7 +1958,7 @@ index a4b40a008b15782db48198b843263891e3dc7069..5734746b4ac7bb13d74827dd4ab3de11
                  draw_view(tui, &view)?;
              }
 diff --git a/codex-rs/tui/src/tui.rs b/codex-rs/tui/src/tui.rs
-index 814e01d8449788d873c0cd5bd089bb1b3dce78fa..69d2efe1ad38723079e343450808c8c5b902ed6f 100644
+index 814e01d8449788d873c0cd5bd089bb1b3dce78fa..66ba86121be8379d8077f87ee3e7d9a0c8d3a463 100644
 --- a/codex-rs/tui/src/tui.rs
 +++ b/codex-rs/tui/src/tui.rs
 @@ -19,10 +19,13 @@ use crossterm::SynchronizedUpdate;
@@ -1975,25 +1975,43 @@ index 814e01d8449788d873c0cd5bd089bb1b3dce78fa..69d2efe1ad38723079e343450808c8c5
  use crossterm::terminal::EnterAlternateScreen;
  use crossterm::terminal::LeaveAlternateScreen;
  #[cfg(not(unix))]
-@@ -228,6 +231,7 @@ pub fn set_modes() -> Result<()> {
+@@ -224,10 +227,23 @@ mod tests {
+     }
+ }
+ 
++/// Whether the TUI takes over the terminal's mouse so a click can place the composer cursor.
++///
++/// Off by default: an inline TUI that owns the mouse also owns the wheel, which stops the
++/// terminal's own scrollback from scrolling the transcript, and any-motion reporting streams
++/// an event for every pointer movement. `CODEX_NOIR_MOUSE=1` opts in.
++fn mouse_capture_enabled() -> bool {
++    std::env::var("CODEX_NOIR_MOUSE")
++        .is_ok_and(|value| matches!(value.trim(), "1" | "true" | "on"))
++}
++
+ pub fn set_modes() -> Result<()> {
      ensure_virtual_terminal_processing()?;
  
      execute!(stdout(), EnableBracketedPaste)?;
-+    execute!(stdout(), EnableMouseCapture)?;
++    if mouse_capture_enabled() {
++        execute!(stdout(), EnableMouseCapture)?;
++    }
  
      enable_raw_mode()?;
      #[cfg(windows)]
-@@ -315,6 +319,9 @@ fn restore_common(
+@@ -315,6 +331,11 @@ fn restore_common(
      if let Err(err) = execute!(stdout(), DisableBracketedPaste) {
          first_error.get_or_insert(err);
      }
-+    if let Err(err) = execute!(stdout(), DisableMouseCapture) {
++    if mouse_capture_enabled()
++        && let Err(err) = execute!(stdout(), DisableMouseCapture)
++    {
 +        first_error.get_or_insert(err);
 +    }
      let _ = execute!(stdout(), DisableFocusChange);
      if matches!(raw_mode_restore, RawModeRestore::Disable)
          && let Err(err) = disable_raw_mode()
-@@ -564,6 +571,8 @@ pub enum TuiEvent {
+@@ -564,6 +585,8 @@ pub enum TuiEvent {
      Key(KeyEvent),
      /// A bracketed paste payload normalized by the app layer before it reaches the composer.
      Paste(String),

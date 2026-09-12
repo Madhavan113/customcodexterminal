@@ -46,6 +46,31 @@ class DancerTests(unittest.TestCase):
                         self.assertEqual(len(painted), lines)
                         self.assertTrue(all(len(row) == columns for row in painted))
 
+    def test_painter_sends_only_the_cells_that_changed(self):
+        state = {"phase": "tool", "effort": "xhigh", "tool": "Bash"}
+        painter = dancer.Painter()
+        first = painter.paint(0.0, 120, 14, state)
+        self.assertTrue(first.startswith("\x1b[2J\x1b[?2026h\x1b[H"))
+        self.assertEqual(first[len("\x1b[2J") :], dancer.frame(0.0, 120, 14, state))
+        # The same instant again changes nothing, so nothing is sent.
+        self.assertEqual(painter.paint(0.0, 120, 14, state), "")
+        # A later instant repaints only the rows that moved, each addressed by position.
+        delta = painter.paint(1 / 12, 120, 14, state)
+        self.assertIn("H", delta)
+        self.assertNotIn("\x1b[H", delta)
+        self.assertLess(len(delta), len(dancer.frame(1 / 12, 120, 14, state)))
+        self.assertEqual(painter.rows, dancer.compose(1 / 12, 120, 14, state))
+        # The idle rail is still, so idle frames cost far less than a full repaint.
+        idle = {"phase": "idle", "effort": "medium"}
+        painter.paint(0.0, 120, 14, idle)
+        self.assertLess(
+            len(painter.paint(1 / 12, 120, 14, idle)),
+            len(dancer.frame(1 / 12, 120, 14, idle)) / 2,
+        )
+        # A resize repaints the whole pane from a cleared screen.
+        resized = painter.paint(2.0, 90, 10, idle)
+        self.assertEqual(resized, "\x1b[2J" + dancer.frame(2.0, 90, 10, idle))
+
     def test_shiba_runs_beside_the_mascot_when_there_is_room(self):
         wide = "".join(rows(3.0, 80, 8))
         self.assertIn("▟▙▟▙", wide)

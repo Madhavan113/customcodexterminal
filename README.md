@@ -67,7 +67,7 @@ open -a WezTerm
 
 The config is copied to `~/.config/wezterm/wezterm.lua` and the GIF to `~/.config/wezterm/noir-velocity.gif`. Edit the two variables at the top of the config to swap the file or change `dim`, the translucent wash that keeps text readable over the picture (0 shows it exactly as shot). Terminal.app keeps a still frame of the same GIF as its wallpaper.
 
-The installed profile uses Mac-style editing shortcuts: `Command+C` copies, `Command+V` pastes, and `Command+Z` sends the terminal undo sequence used by zsh and the Codex composer. `Ctrl+C` and `Ctrl+Z` retain their normal Unix interrupt and process-suspension behavior. While Codex is open, click inside the composer to place its insertion cursor. Codex owns the mouse during that session, so hold Shift while dragging to select terminal text, then press `Command+C` to copy it.
+The installed profile uses Mac-style editing shortcuts: `Command+C` copies, `Command+V` pastes, and `Command+Z` sends the terminal undo sequence used by zsh and the Codex composer. `Ctrl+C` and `Ctrl+Z` retain their normal Unix interrupt and process-suspension behavior. Codex leaves the mouse to the terminal by default, so the wheel scrolls the transcript through your terminal's own scrollback. Set `CODEX_NOIR_MOUSE=1` to let a click inside the composer place its insertion cursor instead; Codex then owns the mouse for that session, the wheel no longer scrolls, and you hold Shift while dragging to select terminal text before pressing `Command+C`.
 
 ## Claude Code: `claude-noir`
 

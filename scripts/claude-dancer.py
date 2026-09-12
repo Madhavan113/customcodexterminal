@@ -342,7 +342,8 @@ def paint_rail(canvas, colors, backgrounds, bold, row, state, seconds):
             )
 
 
-def frame(seconds, columns, lines, state=None):
+def compose(seconds, columns, lines, state=None):
+    """Cells for one instant: per row, (glyph, color, bold, background) tuples."""
     width = len(MASCOT[0])
     height = len(MASCOT)
     shiba_width = len(SHIBA_TROT[0])
@@ -426,27 +427,77 @@ def frame(seconds, columns, lines, state=None):
     if rail_row is not None:
         paint_rail(canvas, colors, backgrounds, bold, rail_row, state, seconds)
 
+    return [
+        list(zip(canvas[row], colors[row], bold[row], backgrounds[row]))
+        for row in range(lines)
+    ]
+
+
+def style(color, heavy, background):
+    foreground = "39" if color is None else f"38;5;{color}"
+    background = "49" if background is None else f"48;5;{background}"
+    return f"\x1b[{1 if heavy else 22};{foreground};{background}m"
+
+
+def render(row, start, stop):
+    """Escape text for the cells `start..stop` of one composed row, ending with a reset."""
+    out = []
+    current = None
+    for glyph, color, heavy, background in row[start:stop]:
+        cell_style = (color, heavy, background)
+        if cell_style != current:
+            out.append(style(*cell_style))
+            current = cell_style
+        out.append(glyph)
+    out.append("\x1b[0m")
+    return "".join(out)
+
+
+def frame(seconds, columns, lines, state=None):
+    """The whole pane for one instant, painted from the top-left corner."""
+    rows = compose(seconds, columns, lines, state)
     out = ["\x1b[?2026h\x1b[H"]
-    for row_index in range(lines):
-        current = (None, False, None)
-        for column_index in range(columns):
-            style = (
-                colors[row_index][column_index],
-                bold[row_index][column_index],
-                backgrounds[row_index][column_index],
-            )
-            if style != current:
-                color, heavy, background = style
-                foreground = "39" if color is None else f"38;5;{color}"
-                background = "49" if background is None else f"48;5;{background}"
-                out.append(f"\x1b[{1 if heavy else 22};{foreground};{background}m")
-                current = style
-            out.append(canvas[row_index][column_index])
-        out.append("\x1b[0m")
+    for row_index, row in enumerate(rows):
+        out.append(render(row, 0, columns))
         if row_index < lines - 1:
             out.append("\r\n")
     out.append("\x1b[?2026l")
     return "".join(out)
+
+
+class Painter:
+    """Sends each frame as the difference from the frame before it.
+
+    The previous frame is the cache: cells that did not change are never sent
+    again, so tmux and the terminal only parse and redraw the runners, the trail
+    and a moving rail rather than the whole pane twelve times a second. A resize
+    or the first frame repaints everything.
+    """
+
+    def __init__(self):
+        self.rows = None
+        self.geometry = None
+
+    def paint(self, seconds, columns, lines, state=None):
+        geometry = (columns, lines)
+        if self.rows is None or geometry != self.geometry:
+            self.geometry = geometry
+            self.rows = compose(seconds, columns, lines, state)
+            return "\x1b[2J" + frame(seconds, columns, lines, state)
+        rows = compose(seconds, columns, lines, state)
+        out = []
+        for row_index, (row, previous) in enumerate(zip(rows, self.rows)):
+            if row == previous:
+                continue
+            changed = [
+                index for index, cell in enumerate(row) if cell != previous[index]
+            ]
+            start, stop = changed[0], changed[-1] + 1
+            out.append(f"\x1b[{row_index + 1};{start + 1}H{render(row, start, stop)}")
+        self.rows = rows
+        if not out:
+            return ""
+        return "".join(["\x1b[?2026h", *out, "\x1b[?2026l"])
 
 
 def main():
@@ -454,11 +505,13 @@ def main():
     signal.signal(signal.SIGINT, stop)
     signal.signal(signal.SIGHUP, stop)
     write = sys.stdout.write
-    write("\x1b[?25l\x1b[2J")
+    write("\x1b[?25l")
     sys.stdout.flush()
     state = State(os.environ.get("CLAUDE_NOIR_STATE"))
+    painter = Painter()
     tint = None
     start = time.monotonic()
+    tick = 0
     try:
         while running:
             columns, lines = size()
@@ -468,9 +521,13 @@ def main():
                 if color != tint:
                     tint_divider(color)
                     tint = color
-            write(frame(time.monotonic() - start, columns, lines, current))
-            sys.stdout.flush()
-            time.sleep(1 / FPS)
+            output = painter.paint(time.monotonic() - start, columns, lines, current)
+            if output:
+                write(output)
+                sys.stdout.flush()
+            # Sleep to the next frame boundary so the clock does not drift with render time.
+            tick += 1
+            time.sleep(max(0.0, start + tick / FPS - time.monotonic()))
     finally:
         write("\x1b[0m\x1b[2J\x1b[H\x1b[?25h")
         sys.stdout.flush()
