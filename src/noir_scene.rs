@@ -242,10 +242,44 @@ impl Drive {
     }
 }
 
+/// The fastest redraw the host terminal is asked to keep up with while working.
+///
+/// `CODEX_NOIR_FPS=<1..=60>` caps how often the scene and the activity rail schedule
+/// redraws. Drives and clips that already redraw more slowly keep their own cadence, and
+/// nothing is capped while the variable is unset. `bin/codex-noir` sets a low cap in Electron
+/// terminals, which repaint slowly and often without GPU acceleration.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct Cadence {
+    floor: Option<Duration>,
+}
+
+impl Cadence {
+    pub(super) fn from_env() -> Self {
+        Self::from_preference(std::env::var("CODEX_NOIR_FPS").ok().as_deref())
+    }
+
+    pub(super) fn from_preference(fps: Option<&str>) -> Self {
+        let floor = fps
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .filter(|fps| (1..=60).contains(fps))
+            .map(|fps| Duration::from_millis(1000 / fps));
+        Self { floor }
+    }
+
+    /// `tick`, unless it would redraw faster than the cap allows.
+    pub(super) fn clamp(self, tick: Duration) -> Duration {
+        match self.floor {
+            Some(floor) => tick.max(floor),
+            None => tick,
+        }
+    }
+}
+
 pub(super) struct NoirScene {
     scene: Option<Scene>,
     style: Option<Style>,
     drive: Option<Drive>,
+    cadence: Cadence,
     started_at: Cell<Option<Instant>>,
     frames: FrameCache,
 }
@@ -258,6 +292,7 @@ impl Default for NoirScene {
             std::env::var("CODEX_NOIR_STYLE").ok().as_deref(),
         );
         scene.drive = Drive::from_preference(std::env::var("CODEX_NOIR_DRIVE").ok().as_deref());
+        scene.cadence = Cadence::from_env();
         scene
     }
 }
@@ -268,6 +303,7 @@ impl NoirScene {
             scene: Scene::from_preferences(scene, legacy),
             style: Style::from_preference(style),
             drive: None,
+            cadence: Cadence::default(),
             started_at: Cell::new(None),
             frames: FrameCache::default(),
         }
@@ -409,13 +445,15 @@ impl Renderable for SceneComposer<'_> {
                 .composer
                 .noir_scene
                 .drive_for(self.composer.effort_tier);
-            let tick = match source {
-                Source::Photo(study) | Source::Lit(study) => {
-                    study.frame_interval().unwrap_or(STILL_TICK)
+            let tick = self.composer.noir_scene.cadence.clamp(
+                match source {
+                    Source::Photo(study) | Source::Lit(study) => {
+                        study.frame_interval().unwrap_or(STILL_TICK)
+                    }
+                    Source::Field => STILL_TICK,
                 }
-                Source::Field => STILL_TICK,
-            }
-            .min(drive.tick());
+                .min(drive.tick()),
+            );
             self.composer.noir_scene.frames.render(
                 FrameSpec {
                     scene,

@@ -21,6 +21,15 @@ All 14 live CLI scenarios preserved draft text, cursor position, and idle behavi
 
 With the violet warp bar enabled, the optimized Ultra build measured **30.1 ms** median keypress echo in the same 120×36, 256-color streaming workload. All six release verification scenarios preserved the draft, cursor, and idle behavior. Local captures and results are under ignored `output/warp-mode/`.
 
+### Where the time goes, and the fast path
+
+Measured on 2026-09-11 with the same streaming workload: the TUI process itself is cheap, but while working it sends about 95 KB/s of decorative redraws at 23 frames per second (Cruise), 118 KB/s in Overdrive, 39 KB/s with the scene off (the rail alone), and 3 KB/s with motion off. The host terminal turns that stream into pixels, and that is where a setup feels slow:
+
+- **Electron terminals** (Cursor, VS Code) paint slowest, and with `terminal.integrated.gpuAcceleration` set to `off` they paint every cell through the DOM. The launcher therefore sets `CODEX_NOIR_FPS=8` when `TERM_PROGRAM` is `vscode`, capping the scene and rail at 8 redraws per second. Any value from 1 to 60 works in any terminal; unset leaves the drives at their native 10, 20, and 30 per second. Turning GPU acceleration on is faster still, but the panel wallpaper no longer shows through the terminal.
+- **WezTerm** flips untimed GIF frames at its frame cap, repainting the whole window each time. The installer now paces the wallpaper's frames (`--wallpaper-fps`, default 10), the config draws through Metal (`front_end = "WebGpu"`), and the cursor blinks without a fade. Set `wallpaper_motion = false` at the top of the config for the still frame and zero background repaints.
+- **tmux** in `claude-noir` now declares synchronized updates, so WezTerm and Ghostty receive each redraw as one frame. The mascot pane sends only the cells that changed since the previous frame.
+- **Ghostty** is the fastest host for both launchers: GPU rendering, a still wallpaper, and no animation of its own. `python3 scripts/install-ghostty.py --apply` installs the matching profile.
+
 ## Codex TUI: `codex-noir`
 
 ```sh
@@ -34,6 +43,7 @@ CODEX_NOIR_SCENE=transit codex-noir
 CODEX_NOIR_SCENE=dither codex-noir
 CODEX_NOIR_STYLE=ascii codex-noir
 CODEX_NOIR_STYLE=dither codex-noir
+CODEX_NOIR_FPS=8 codex-noir           # cap decorative redraws at 8 per second
 CODEX_NOIR_SCENE=off codex-noir
 codex-noir -c tui.animations=false
 ```
@@ -65,7 +75,7 @@ python3 scripts/install-wezterm.py --apply --wallpaper /path/to/other.gif
 open -a WezTerm
 ```
 
-The config is copied to `~/.config/wezterm/wezterm.lua` and the GIF to `~/.config/wezterm/noir-velocity.gif`. Edit the two variables at the top of the config to swap the file or change `dim`, the translucent wash that keeps text readable over the picture (0 shows it exactly as shot). Terminal.app keeps a still frame of the same GIF as its wallpaper.
+The config is copied to `~/.config/wezterm/wezterm.lua` and the GIF to `~/.config/wezterm/noir-velocity.gif`. The still frame goes to `~/.config/wezterm/noir-velocity.png`. The GIF's frames carry no timing, so the installer paces them at `--wallpaper-fps` (default 10) with a byte-exact copy; WezTerm would otherwise flip them at its frame cap and repaint the window each time. Edit the variables at the top of the config: `wallpaper_motion = false` shows the still frame, and `dim` is the translucent wash that keeps text readable over the picture (0 shows it exactly as shot). Terminal.app keeps a still frame of the same GIF as its wallpaper.
 
 The installed profile uses Mac-style editing shortcuts: `Command+C` copies, `Command+V` pastes, and `Command+Z` sends the terminal undo sequence used by zsh and the Codex composer. `Ctrl+C` and `Ctrl+Z` retain their normal Unix interrupt and process-suspension behavior. Codex leaves the mouse to the terminal by default, so the wheel scrolls the transcript through your terminal's own scrollback. Set `CODEX_NOIR_MOUSE=1` to let a click inside the composer place its insertion cursor instead; Codex then owns the mouse for that session, the wheel no longer scrolls, and you hold Shift while dragging to select terminal text before pressing `Command+C`.
 
@@ -87,7 +97,7 @@ CLAUDE_NOIR_ROWS=10 claude-noir     # taller mascot pane (default 8)
 CLAUDE_NOIR_DANCER=off claude-noir  # plain claude
 ```
 
-The launcher uses its own tmux server socket and config (`terminal/claude-noir.tmux.conf`), so an existing tmux setup is untouched. Inside an existing tmux session, or without tmux, it runs plain `claude`. The animation is `scripts/claude-dancer.py` and the hook is `scripts/claude-pulse.py`, both installed to `~/.local/share/claude-noir/`.
+The launcher uses its own tmux server socket and config (`terminal/claude-noir.tmux.conf`), so an existing tmux setup is untouched. The config declares synchronized updates for the outer terminal, so WezTerm and Ghostty paint each redraw as a whole frame. Inside an existing tmux session, or without tmux, it runs plain `claude`. The animation is `scripts/claude-dancer.py` and the hook is `scripts/claude-pulse.py`, both installed to `~/.local/share/claude-noir/`.
 
 ## Palette and Ghostty
 

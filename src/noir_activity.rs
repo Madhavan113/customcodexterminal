@@ -12,6 +12,7 @@ use ratatui::style::Color;
 use ratatui::style::Modifier;
 
 use super::ChatComposer;
+use super::noir_scene::Cadence;
 use super::popup_state::ActivePopup;
 use crate::color::blend;
 use crate::color::is_light;
@@ -30,12 +31,24 @@ enum ActivityMode {
     Ultra,
 }
 
-#[derive(Default)]
 pub(super) struct NoirActivity {
     pub(super) enabled: bool,
     working: bool,
     mode: ActivityMode,
     started_at: Cell<Option<Instant>>,
+    cadence: Cadence,
+}
+
+impl Default for NoirActivity {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            working: false,
+            mode: ActivityMode::default(),
+            started_at: Cell::new(None),
+            cadence: Cadence::from_env(),
+        }
+    }
 }
 
 impl NoirActivity {
@@ -123,16 +136,18 @@ impl ChatComposer {
             composer.width.saturating_sub(4),
             /*height*/ 1,
         );
+        let tick = self.noir_activity.cadence.clamp(FRAME_TICK);
         paint(
             self.noir_activity.mode,
             elapsed,
+            tick,
             rail,
             buf,
             background,
             color_level,
         );
         if let Some(frame_requester) = &self.frame_requester {
-            frame_requester.schedule_frame_in(FRAME_TICK);
+            frame_requester.schedule_frame_in(tick);
         }
     }
 }
@@ -140,6 +155,7 @@ impl ChatComposer {
 fn paint(
     mode: ActivityMode,
     elapsed: Duration,
+    tick: Duration,
     rail: Rect,
     buf: &mut Buffer,
     background: (u8, u8, u8),
@@ -157,7 +173,7 @@ fn paint(
     };
     // Keyboard redraws within a tick reuse the same animation phase. Quantize the small
     // palette once per paint, rather than searching all 256 terminal colors for every cell.
-    let seconds = (elapsed.as_millis() / FRAME_TICK.as_millis()) as f64 * 0.05;
+    let seconds = (elapsed.as_millis() / tick.as_millis()) as f64 * tick.as_secs_f64();
     let label = match mode {
         ActivityMode::Standard => " WORKING ",
         ActivityMode::Extra if rail.width >= 20 => " EXTRA THINKING ",

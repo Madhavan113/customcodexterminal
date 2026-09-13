@@ -5,9 +5,11 @@ local wezterm = require("wezterm")
 local config = wezterm.config_builder()
 local act = wezterm.action
 
--- Tune these two lines freely.
-local wallpaper = wezterm.home_dir .. "/.config/wezterm/noir-velocity.gif"
+-- Tune these lines freely.
+local wallpaper_motion = true -- false shows the still frame, so the window repaints only for text.
 local dim = 0.25 -- 0 shows the wallpaper exactly as shot; higher darkens it under the text.
+local wallpaper = wezterm.home_dir
+	.. (wallpaper_motion and "/.config/wezterm/noir-velocity.gif" or "/.config/wezterm/noir-velocity.png")
 
 -- SF Mono ships inside Terminal.app rather than as a system font; point WezTerm at that folder.
 config.font_dirs = { "/System/Applications/Utilities/Terminal.app/Contents/Resources/Fonts" }
@@ -47,8 +49,15 @@ config.background = {
 		opacity = dim,
 	},
 }
-config.animation_fps = 24
+-- Rendering. WebGpu draws through Metal; OpenGL on macOS is a deprecated compatibility layer.
+-- The wallpaper is the only smooth animation: the cursor toggles instead of fading, so the window
+-- does not repaint continuously for the cursor alone. The installer paces the GIF's frames
+-- (--wallpaper-fps); WezTerm would otherwise flip untimed frames at its frame cap.
+config.front_end = "WebGpu"
 config.max_fps = 60
+config.animation_fps = 1
+config.cursor_blink_ease_in = "Constant"
+config.cursor_blink_ease_out = "Constant"
 
 config.hide_tab_bar_if_only_one_tab = true
 config.use_fancy_tab_bar = false

@@ -904,3 +904,27 @@ fn noir_halftone_gallery_shows_coast_footage_and_moire() {
     }
     insta::assert_snapshot!("noir_halftone_gallery", gallery.join("\n"));
 }
+
+#[test]
+fn noir_cadence_caps_only_ticks_faster_than_the_requested_rate() {
+    let eight = Cadence::from_preference(Some("8"));
+    assert_eq!(
+        [33, 100, 125, 200].map(|millis| eight.clamp(Duration::from_millis(millis))),
+        [125, 125, 125, 200].map(Duration::from_millis)
+    );
+    assert_eq!(
+        Cadence::from_preference(Some(" 30 ")).clamp(Duration::from_millis(16)),
+        Duration::from_millis(33)
+    );
+    for unset in [None, Some(""), Some("0"), Some("61"), Some("fast")] {
+        assert_eq!(
+            Cadence::from_preference(unset).clamp(Duration::from_millis(33)),
+            Duration::from_millis(33),
+            "{unset:?} must leave the drive's cadence alone"
+        );
+    }
+    let scene = NoirScene::from_preferences(
+        /*scene*/ None, /*legacy*/ None, /*style*/ None,
+    );
+    assert_eq!(scene.cadence, Cadence::default());
+}

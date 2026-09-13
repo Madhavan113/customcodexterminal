@@ -7,6 +7,13 @@ if [ ! -x "$codex_noir_binary" ]; then
 fi
 
 # Defaults come before user arguments so explicit -c overrides still win.
+# Electron terminals (Cursor, VS Code) repaint slowly, often without GPU acceleration. Cap the
+# decorative redraws there unless a rate was chosen; the TUI reads CODEX_NOIR_FPS.
+if [ -z "${CODEX_NOIR_FPS-}" ] && [ "${TERM_PROGRAM-}" = "vscode" ]; then
+    CODEX_NOIR_FPS=8
+    export CODEX_NOIR_FPS
+fi
+
 if [ -f "${CODEX_HOME:-$HOME/.codex}/themes/noir-velocity.tmTheme" ]; then
     exec "$codex_noir_binary" \
         -c 'check_for_update_on_startup=false' \

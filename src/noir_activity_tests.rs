@@ -64,6 +64,7 @@ fn noir_activity_modes_animate_without_touching_draft_cells() {
             paint(
                 mode,
                 Duration::from_millis(millis),
+                FRAME_TICK,
                 rail,
                 &mut buf,
                 (9, 10, 16),
@@ -114,6 +115,7 @@ fn noir_activity_clips_small_offset_rails_and_preserves_occupied_cells() {
         paint(
             ActivityMode::Ultra,
             Duration::from_millis(700),
+            FRAME_TICK,
             rail,
             &mut buf,
             (9, 10, 16),
@@ -199,6 +201,7 @@ fn noir_warp_bar_oscillates_at_a_bounded_cadence_in_both_color_modes() {
             paint(
                 ActivityMode::Ultra,
                 Duration::from_millis(millis),
+                FRAME_TICK,
                 rail,
                 &mut frame,
                 background,
@@ -246,4 +249,34 @@ fn noir_activity_is_dormant_behind_a_popup_or_when_motion_is_disabled() {
     composer.set_text_content(String::new(), Vec::new(), Vec::new());
     composer.set_noir_animations_enabled(/*enabled*/ false);
     assert_eq!(composer.noir_activity.elapsed_at(Instant::now()), None);
+}
+
+#[test]
+fn noir_activity_redraws_at_the_capped_cadence() {
+    let area = Rect::new(
+        /*x*/ 0, /*y*/ 0, /*width*/ 80, /*height*/ 2,
+    );
+    let rail = Rect::new(
+        /*x*/ 2, /*y*/ 0, /*width*/ 76, /*height*/ 1,
+    );
+    let tick = Cadence::from_preference(Some("8")).clamp(FRAME_TICK);
+    assert_eq!(tick, Duration::from_millis(125));
+    let frames = [0, 120, 130].map(|millis| {
+        let mut frame = Buffer::empty(area);
+        paint(
+            ActivityMode::Ultra,
+            Duration::from_millis(millis),
+            tick,
+            rail,
+            &mut frame,
+            (20, 19, 32),
+            StdoutColorLevel::TrueColor,
+        );
+        frame
+    });
+    assert_eq!(
+        frames[0], frames[1],
+        "redraws inside one capped tick must reuse the bar"
+    );
+    assert_ne!(frames[1], frames[2], "the bar must still move at the capped rate");
 }
